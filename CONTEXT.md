@@ -1,0 +1,25 @@
+# Examen
+
+An app for finding catalog images that are visually similar to an image a user uploads, using vector similarity search.
+
+## Language
+
+**Reference**:
+A pre-embedded image in the searchable catalog (the dataset). Stored ahead of time with its vector; never created by a user upload.
+_Avoid_: Catalog image, dataset image, Image
+
+**Query**:
+An image a user uploads in order to search the catalog. Embedded on submission and compared against every Reference.
+_Avoid_: Upload, photo, Image
+
+**Match**:
+A stored result linking one Query to one Reference, carrying a similarity score. Searching produces the best Matches.
+_Avoid_: Result, hit
+
+**Key**:
+The opaque `nanoid` identifier under which an image's bytes are stored in the S3 bucket. The single link between a stored image and its bytes.
+_Avoid_: Filename, path, name
+
+**Auctionet ID**:
+The external catalog identifier for a Reference on Auctionet. Persisted on each Match so past results can link back to the catalog item without a live Qdrant lookup.
+_Avoid_: Item id, lot id
