@@ -10,6 +10,7 @@ import { TrashIcon } from "lucide-react";
 import { toast } from "sonner";
 import { queryClient } from "@/components/providers";
 import { motion } from "motion/react";
+import { listItem, staggerContainer } from "@/lib/motion";
 
 export default function Queries() {
   const { data } = useQuery(
@@ -66,21 +67,27 @@ export default function Queries() {
   return (
     <main className="container mx-auto">
       <h1>Queries</h1>
-      <ul className="grid grid-cols-1 gap-4 px-2 sm:grid-cols-4">
+      <motion.ul
+        className="grid grid-cols-1 gap-4 px-2 sm:grid-cols-4"
+        variants={staggerContainer}
+        initial="hidden"
+        animate="show"
+      >
         {data?.map((item) => (
           <motion.li
             key={item.id}
             layout
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ type: "spring", stiffness: 320, damping: 30 }}
+            variants={listItem}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
           >
             <Link href={`/queries/${item.id}`}>
               <CardImage item={item} onDelete={deleteMutation.mutate} />
             </Link>
           </motion.li>
         ))}
-      </ul>
+      </motion.ul>
     </main>
   );
 }

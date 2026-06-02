@@ -42,11 +42,6 @@ export async function DELETE(
 ) {
   const { id } = await params;
 
-  //simulate a delay
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-
-  return Response.json({ error: "Not implemented" }, { status: 501 });
-
   try {
     await db.transaction(async (tx) => {
       await tx.delete(matches).where(eq(matches.query_id, id));
