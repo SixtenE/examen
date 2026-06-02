@@ -10,7 +10,10 @@ import type { NextRequest } from "next/server";
 
 const MATCH_LIMIT = 6;
 
-export async function GET({ params }: { params: Promise<{ id: string }> }) {
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   const { id } = await params;
 
   try {

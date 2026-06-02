@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { queries } from "@/db/schema";
+import { matches, queries } from "@/db/schema";
 import type { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -31,6 +31,29 @@ export async function GET(
     );
 
     return Response.json({ ...query, image_url });
+  } catch {
+    return Response.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+
+  //simulate a delay
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+
+  return Response.json({ error: "Not implemented" }, { status: 501 });
+
+  try {
+    await db.transaction(async (tx) => {
+      await tx.delete(matches).where(eq(matches.query_id, id));
+      await tx.delete(queries).where(eq(queries.id, id));
+    });
+
+    return Response.json({ message: "Query deleted" }, { status: 200 });
   } catch {
     return Response.json({ error: "Internal server error" }, { status: 500 });
   }

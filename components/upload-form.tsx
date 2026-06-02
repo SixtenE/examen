@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/field";
 import { InputGroup, InputGroupInput } from "@/components/ui/input-group";
 import { useRouter } from "next/navigation";
+import { queryClient } from "@/components/providers";
 
 const formSchema = z.object({
   file: z.instanceof(File),
@@ -67,6 +68,7 @@ export function UploadForm() {
     onSuccess: (result) => {
       toast.success(`File uploaded successfully: ${result.id}`);
       form.reset();
+      queryClient.invalidateQueries({ queryKey: ["queries"] });
       router.push(`/queries/${result.id}`);
     },
     onError: () => {

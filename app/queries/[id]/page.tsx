@@ -7,6 +7,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useParams } from "next/navigation";
 import { queryOptions, useQuery } from "@tanstack/react-query";
+import { motion } from "motion/react";
 
 type Match = {
   id: string;
@@ -51,7 +52,12 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
     <main className="container mx-auto">
       <div className="grid h-full grid-cols-1 gap-12 sm:grid-cols-5">
         <div className="col-span-2 flex">
-          <div className="sticky top-20 flex w-full flex-col items-center gap-4">
+          <motion.div
+            className="sticky top-20 flex w-full flex-col items-center gap-4"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+          >
             <Card className="bg-muted aspect-4/3 h-auto w-full rounded-sm">
               <CardContent className="flex h-full items-center justify-center">
                 {queryData?.image_url && (
@@ -66,7 +72,7 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
                 )}
               </CardContent>
             </Card>
-          </div>
+          </motion.div>
         </div>
         <div className="col-span-3 flex h-full flex-col gap-4">
           <h2 className="w-full text-lg font-medium">Matches</h2>
@@ -75,15 +81,15 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
           ) : (
             <ul className="grid grid-cols-3 gap-4">
               {matchesData?.map((match: Match) => (
-                <li key={match.id}>
+                <motion.li key={match.id}>
                   <Link
                     href={`https://auctionet.com/${match.auctionet_id}`}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    <Card className="bg-muted relative aspect-4/3 h-auto w-full rounded-sm transition-opacity hover:opacity-90">
+                    <Card className="bg-muted group relative aspect-4/3 h-auto w-full rounded-sm transition-opacity hover:opacity-90">
                       <CardContent className="flex h-full flex-col items-center justify-center gap-2 p-4">
-                        <ExternalLink className="text-muted-foreground absolute top-3 right-3 size-4" />
+                        <ExternalLink className="text-muted-foreground absolute top-3 right-3 size-4 opacity-0 transition group-hover:opacity-100" />
                         <span className="text-sm font-medium">
                           {match.auctionet_id}
                         </span>
@@ -93,7 +99,7 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
                       </CardContent>
                     </Card>
                   </Link>
-                </li>
+                </motion.li>
               ))}
             </ul>
           )}
