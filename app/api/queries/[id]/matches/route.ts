@@ -5,7 +5,7 @@ import { qdrantClient } from "@/lib/qdrant";
 import { s3Client } from "@/lib/s3";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 
 const MATCH_LIMIT = 6;
@@ -42,11 +42,32 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const [query] = await db.select().from(queries).where(eq(queries.id, id));
+    // Atomically claim the query for generation: only one caller can flip a
+    // non-processing query to "processing", so concurrent loads can't both run
+    // the (expensive) embed + search.
+    const [claimed] = await db
+      .update(queries)
+      .set({ status: "processing" })
+      .where(and(eq(queries.id, id), ne(queries.status, "processing")))
+      .returning();
 
-    if (!query) {
-      return Response.json({ error: "Query not found" }, { status: 404 });
+    if (!claimed) {
+      const [existing] = await db
+        .select()
+        .from(queries)
+        .where(eq(queries.id, id));
+
+      if (!existing) {
+        return Response.json({ error: "Query not found" }, { status: 404 });
+      }
+
+      return Response.json(
+        { error: "Matching already in progress" },
+        { status: 409 },
+      );
     }
+
+    const query = claimed;
 
     const imageUrl = await getSignedUrl(
       s3Client,
@@ -90,9 +111,23 @@ export async function POST(
       return tx.insert(matches).values(rows).returning();
     });
 
+    await db.update(queries).set({ status: "ready" }).where(eq(queries.id, id));
+
     return Response.json(persisted);
   } catch (error) {
     console.error("matches route error:", error);
+
+    // Best-effort: mark the query failed so the page can surface a retry
+    // instead of being stuck on "processing".
+    try {
+      await db
+        .update(queries)
+        .set({ status: "failed" })
+        .where(eq(queries.id, id));
+    } catch (statusError) {
+      console.error("matches route status update error:", statusError);
+    }
+
     return Response.json(
       {
         error: error instanceof Error ? error.message : "Internal server error",

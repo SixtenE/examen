@@ -1,4 +1,5 @@
 import {
+  pgEnum,
   pgTable,
   real,
   timestamp,
@@ -6,9 +7,17 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
+export const queryStatus = pgEnum("query_status", [
+  "pending",
+  "processing",
+  "ready",
+  "failed",
+]);
+
 export const queries = pgTable("queries", {
   id: uuid("id").primaryKey().defaultRandom(),
   image_key: varchar("image_key").notNull().unique(),
+  status: queryStatus("status").notNull().default("pending"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

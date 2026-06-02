@@ -6,11 +6,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { queryOptions, useMutation, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { TrashIcon } from "lucide-react";
+import { MoreHorizontal, MoreVertical, TrashIcon } from "lucide-react";
 import { toast } from "sonner";
 import { queryClient } from "@/components/providers";
 import { motion } from "motion/react";
-import { listItem, staggerContainer } from "@/lib/motion";
+import { enter, listItem, staggerContainer } from "@/lib/motion";
 
 export default function Queries() {
   const { data } = useQuery(
@@ -65,8 +65,16 @@ export default function Queries() {
   });
 
   return (
-    <main className="container mx-auto">
-      <h1>Queries</h1>
+    <main className="container mx-auto flex flex-col gap-8 px-2">
+      <motion.h1
+        initial={{ scale: 0.9 }}
+        animate={{ scale: 1 }}
+        transition={enter}
+        className="mr-auto text-2xl font-bold"
+      >
+        Queries
+      </motion.h1>
+
       <motion.ul
         className="grid grid-cols-1 gap-4 px-2 sm:grid-cols-4"
         variants={staggerContainer}
@@ -81,6 +89,7 @@ export default function Queries() {
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             transition={{ type: "spring", stiffness: 400, damping: 30 }}
+            tabIndex={-1}
           >
             <Link href={`/queries/${item.id}`}>
               <CardImage item={item} onDelete={deleteMutation.mutate} />
@@ -103,14 +112,14 @@ function CardImage({
     <Card className="relative mx-auto w-full max-w-sm rounded-sm pt-0">
       <Button
         size="icon"
-        variant="secondary"
+        variant="outline"
         className="absolute top-2 right-2 z-20"
         onClick={(e) => {
           e.preventDefault();
           onDelete(item.id);
         }}
       >
-        <TrashIcon className="size-4" />
+        <MoreVertical className="size-4" />
       </Button>
       <Image
         src={item.image_url}
@@ -118,7 +127,7 @@ function CardImage({
         width={100}
         height={100}
         loading="eager"
-        className="relative z-10 aspect-video w-full object-cover"
+        className="relative z-10 aspect-video w-full rounded-b-sm object-cover"
       />
       <CardHeader>
         <CardAction>

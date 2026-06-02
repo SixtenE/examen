@@ -54,15 +54,6 @@ export function UploadForm() {
       }
       const result = (await response.json()) as { id: string; key: string };
 
-      const matchesResponse = await fetch(`/api/queries/${result.id}/matches`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (!matchesResponse.ok) {
-        throw new Error("Failed to find matches");
-      }
-
       return result;
     },
     onSuccess: (result) => {
