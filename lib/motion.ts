@@ -17,7 +17,7 @@ export const staggerContainer: Variants = {
   show: {
     transition: {
       // Short delay between items keeps the cascade from feeling slow.
-      staggerChildren: 0.05,
+      staggerChildren: 0.5,
     },
   },
 };
@@ -25,11 +25,11 @@ export const staggerContainer: Variants = {
 // List item entrance. Never animate from scale(0) — nothing in the real world
 // appears from nothing, so we start barely deflated with a small upward drift.
 export const listItem: Variants = {
-  hidden: { opacity: 0, y: 8, scale: 0.98 },
-  show: {
+  hidden: { opacity: 0, x: 20, scale: 0.98 },
+  show: (index = 0) => ({
     opacity: 1,
-    y: 0,
+    x: 0,
     scale: 1,
-    transition: { duration: 0.25, ease: easeOut },
-  },
+    transition: { duration: 0.25, ease: easeOut, delay: index * 0.05 },
+  }),
 };

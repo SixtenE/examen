@@ -5,7 +5,7 @@ import Image from "next/image";
 
 export function Header() {
   return (
-    <header className="bg-background flex w-full items-center p-2 sm:px-0">
+    <header className="bg-background/10 fixed top-0 right-0 left-0 flex items-center p-2 backdrop-blur-xs sm:px-0">
       <div className="container mx-auto">
         <nav className="flex w-full items-center">
           <Link href="/" className="rounded-full">

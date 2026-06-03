@@ -60,7 +60,7 @@ export function UploadForm() {
       toast.success("File uploaded successfully");
       form.reset();
       queryClient.invalidateQueries({ queryKey: ["queries"] });
-      router.push(`/queries/${result.id}`);
+      router.push(`/${result.id}`);
     },
     onError: () => {
       toast.error("Failed to upload file");
