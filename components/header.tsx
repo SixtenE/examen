@@ -10,11 +10,11 @@ export function Header() {
         <nav className="flex w-full items-center">
           <Link href="/" className="rounded-full">
             <Image
-              src="/Frame 5.svg"
+              src="/logo.svg"
               alt="Logo"
               width={160}
               height={60}
-              unoptimized
+              loading="eager"
               className="text-brand h-10 w-auto"
             />
           </Link>
