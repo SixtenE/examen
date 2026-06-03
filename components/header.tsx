@@ -1,39 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Button } from "./ui/button";
-
-const routes = [
-  {
-    label: "Upload",
-    href: "/",
-  },
-  {
-    label: "Queries",
-    href: "/queries",
-  },
-];
+import Image from "next/image";
 
 export function Header() {
-  const pathname = usePathname();
-
   return (
-    <header className="bg-background fixed top-0 right-0 left-0 z-50 flex items-center justify-center p-2">
-      <nav>
-        <ul className="flex">
-          {routes.map((route) => (
-            <li key={route.href}>
-              <Button
-                variant={pathname === route.href ? "secondary" : "link"}
-                asChild
-              >
-                <Link href={route.href}>{route.label}</Link>
-              </Button>
-            </li>
-          ))}
-        </ul>
-      </nav>
+    <header className="bg-background flex w-full items-center p-2 sm:px-0">
+      <div className="container mx-auto">
+        <nav className="flex w-full items-center">
+          <Link href="/" className="rounded-full">
+            <Image
+              src="/Frame 5.svg"
+              alt="Logo"
+              width={160}
+              height={60}
+              unoptimized
+              className="text-brand h-10 w-auto"
+            />
+          </Link>
+        </nav>
+      </div>
     </header>
   );
 }

@@ -3,34 +3,24 @@ import { qdrantClient } from "@/lib/qdrant";
 
 const items = [
   {
-    auctionet_id: "5081287",
+    auctionet_id: 2719085,
     image_url:
-      "https://images.auctionet.com/uploads/item_5081287_0ddf889b67.jpg",
+      "https://images.auctionet.com/uploads/item_2719085_fadaedc658.jpg",
   },
   {
-    auctionet_id: "5081287",
+    auctionet_id: 2719085,
     image_url:
-      "https://images.auctionet.com/uploads/item_5081287_aef2ecdffc.jpg",
+      "https://images.auctionet.com/uploads/item_2719085_9a8693389a.jpg",
   },
   {
-    auctionet_id: "5081287",
+    auctionet_id: 2719085,
     image_url:
-      "https://images.auctionet.com/uploads/item_5081287_c75afeac6e.jpg",
+      "https://images.auctionet.com/uploads/item_2719085_6167cacf6a.jpg",
   },
   {
-    auctionet_id: "5081287",
+    auctionet_id: 2719085,
     image_url:
-      "https://images.auctionet.com/uploads/item_5081287_ff0781c291.jpg",
-  },
-  {
-    auctionet_id: "5081287",
-    image_url:
-      "https://images.auctionet.com/uploads/item_5081287_14879f7c43.jpg",
-  },
-  {
-    auctionet_id: "5081287",
-    image_url:
-      "https://images.auctionet.com/uploads/item_5081287_f85fa10bb9.jpg",
+      "https://images.auctionet.com/uploads/item_2719085_b6f2348739.jpg",
   },
 ];
 

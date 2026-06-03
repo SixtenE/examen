@@ -3,13 +3,14 @@
 import { UploadForm } from "@/components/upload-form";
 import { motion } from "motion/react";
 import { enter } from "@/lib/motion";
+import FileUpload03 from "@/components/file-upload-03";
 
 export default function Home() {
   return (
     <main className="container mx-auto flex flex-col gap-8 px-2">
       <motion.h1
-        initial={{ scale: 0.9 }}
-        animate={{ scale: 1 }}
+        initial={{ x: -10, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
         transition={enter}
         className="mr-auto text-2xl font-bold"
       >
@@ -21,7 +22,7 @@ export default function Home() {
         transition={enter}
         className="flex flex-col items-center"
       >
-        <UploadForm />
+        <FileUpload03 />
       </motion.div>
     </main>
   );

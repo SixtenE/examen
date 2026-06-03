@@ -57,7 +57,7 @@ export function UploadForm() {
       return result;
     },
     onSuccess: (result) => {
-      toast.success(`File uploaded successfully: ${result.id}`);
+      toast.success("File uploaded successfully");
       form.reset();
       queryClient.invalidateQueries({ queryKey: ["queries"] });
       router.push(`/queries/${result.id}`);

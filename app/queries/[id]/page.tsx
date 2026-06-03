@@ -9,7 +9,7 @@ import Image from "next/image";
 import { useParams } from "next/navigation";
 import { queryOptions, useMutation, useQuery } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { easeOut, listItem, staggerContainer } from "@/lib/motion";
+import { easeOut, enter, listItem, staggerContainer } from "@/lib/motion";
 import { queryClient } from "@/components/providers";
 
 type QueryStatus = "pending" | "processing" | "ready" | "failed";
@@ -97,24 +97,24 @@ export default function Page() {
   const isGenerating = status === "pending" || status === "processing";
 
   return (
-    <main className="container mx-auto">
+    <main className="container mx-auto pt-24">
       <div className="grid h-full grid-cols-1 gap-12 sm:grid-cols-5">
         <div className="col-span-2 flex flex-col gap-4">
-          <div className="flex h-10">
-            <Link href="/queries">
-              <Button variant="ghost">
-                <ArrowLeft />
-                Back to queries
-              </Button>
-            </Link>
-          </div>
+          <motion.h1
+            initial={{ x: -10, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            transition={enter}
+            className="mr-auto text-2xl font-bold"
+          >
+            {queryData?.image_key}
+          </motion.h1>
           <motion.div
             className="sticky top-20 flex w-full flex-col items-center gap-4"
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3, ease: easeOut }}
           >
-            <Card className="bg-muted aspect-4/3 h-auto w-full rounded-sm">
+            <Card className="aspect-4/3 h-auto w-full rounded-sm">
               <CardContent className="flex h-full items-center justify-center">
                 {queryData?.image_url && (
                   <Image
@@ -123,7 +123,7 @@ export default function Page() {
                     width={400}
                     height={300}
                     loading="eager"
-                    className="h-full w-full object-cover mix-blend-darken"
+                    className="h-full w-full object-cover"
                   />
                 )}
               </CardContent>
@@ -222,7 +222,7 @@ function MatchesContent({
             target="_blank"
             rel="noreferrer"
           >
-            <Card className="bg-muted group relative aspect-4/3 h-auto w-full rounded-sm transition-opacity hover:opacity-90">
+            <Card className="group relative aspect-4/3 h-auto w-full rounded-sm transition-opacity hover:opacity-90">
               <CardContent className="flex h-full flex-col items-center justify-center gap-2 p-4">
                 <ExternalLink className="text-muted-foreground absolute top-3 right-3 size-4 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100" />
                 <span className="text-sm font-medium">
