@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { queryOptions, useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { queryClient } from "@/components/providers";
 import { motion } from "motion/react";
@@ -62,19 +62,20 @@ export default function Page() {
                   initial={{ y: -5, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
                   transition={{ delay: 0.05 * (index + 1) }}
-                  className="text-muted-foreground text-sm font-medium tracking-tight"
+                  className="text-muted-foreground animate-pulse text-sm font-medium tracking-tight"
                 >
-                  {"99% match"}
+                  {"Loading..."}
                 </motion.p>
-                <ArrowUpRight className="text-muted-foreground" />
+                <Loader2 className="text-muted-foreground animate-spin" />
+                {/* <ArrowUpRight className="text-muted-foreground" /> */}
               </div>
               <motion.p
                 initial={{ y: 5, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ delay: 0.05 * (index + 1) }}
-                className="text-2xl font-semibold tracking-tighter"
+                className="animate-pulse text-2xl font-semibold tracking-tighter"
               >
-                {"polished-heirloom"}
+                {"Loading..."}
               </motion.p>
             </Link>
           </motion.li>
@@ -103,19 +104,20 @@ export default function Page() {
                   initial={{ y: -5, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
                   transition={{ delay: 0.05 * (index + 1) }}
-                  className="text-muted-foreground text-sm font-medium tracking-tight"
+                  className="text-muted-foreground animate-pulse text-sm font-medium tracking-tight"
                 >
-                  {"78% match"}
+                  {"Loading..."}
                 </motion.p>
-                <ArrowUpRight className="text-muted-foreground" />
+                <Loader2 className="text-muted-foreground animate-spin" />
+                {/* <ArrowUpRight className="text-muted-foreground" /> */}
               </div>
               <motion.p
                 initial={{ y: 5, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ delay: 0.05 * (index + 1) }}
-                className="text-xl font-semibold tracking-tighter"
+                className="animate-pulse text-xl font-semibold tracking-tighter"
               >
-                {"polished-heirloom"}
+                {"Loading..."}
               </motion.p>
             </Link>
           </motion.li>
@@ -144,19 +146,20 @@ export default function Page() {
                   initial={{ y: -5, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
                   transition={{ delay: 0.05 * (index + 1) }}
-                  className="text-muted-foreground text-sm font-medium tracking-tight"
+                  className="text-muted-foreground animate-pulse text-sm font-medium tracking-tight"
                 >
-                  {"56% match"}
+                  {"Loading..."}
                 </motion.p>
-                <ArrowUpRight className="text-muted-foreground" />
+                <Loader2 className="text-muted-foreground animate-spin" />
+                {/* <ArrowUpRight className="text-muted-foreground" /> */}
               </div>
               <motion.p
                 initial={{ y: 5, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ delay: 0.05 * (index + 1) }}
-                className="text-lg font-semibold tracking-tighter"
+                className="animate-pulse text-lg font-semibold tracking-tighter"
               >
-                {"polished-heirloom"}
+                {"Loading..."}
               </motion.p>
             </Link>
           </motion.li>

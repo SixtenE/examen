@@ -23,3 +23,7 @@ _Avoid_: Filename, path, name
 **Auctionet ID**:
 The external catalog identifier for a Reference on Auctionet. Persisted on each Match so past results can link back to the catalog item without a live Qdrant lookup.
 _Avoid_: Item id, lot id
+
+**Auctionet Item**:
+The external catalog entity on Auctionet whose metadata is scraped and whose images become References.
+_Avoid_: Listing, lot, catalog entry
