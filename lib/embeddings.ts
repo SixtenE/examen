@@ -3,7 +3,7 @@ const EMBEDDING_DIMENSIONS = 768;
 
 export async function embedImageUrl(
   imageUrl: string,
-  dimensions: number,
+  dimensions?: number,
 ): Promise<number[]> {
   const response = await fetch("https://openrouter.ai/api/v1/embeddings", {
     method: "POST",

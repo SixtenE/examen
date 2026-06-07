@@ -652,6 +652,13 @@ function timestampForFilename(date: Date) {
   return date.toISOString().replaceAll(":", "-").replaceAll(".", "-");
 }
 
+function getAuctionetItemFilePath(outDir: string, auctionetId: number) {
+  const filename = `${auctionetId}.json`;
+  const folder = filename.slice(0, 3);
+
+  return path.join(outDir, folder, filename);
+}
+
 async function fileExists(filePath: string) {
   try {
     await access(filePath, constants.F_OK);
@@ -724,7 +731,8 @@ async function scrapeItem(
   options: CliOptions,
   manifest: RunManifest,
 ) {
-  const filePath = path.join(options.outDir, `${auctionetId}.json`);
+  const filePath = getAuctionetItemFilePath(options.outDir, auctionetId);
+  const destinationDir = path.dirname(filePath);
 
   if (!options.force && (await fileExists(filePath))) {
     manifest.skipped_item_count += 1;
@@ -735,6 +743,7 @@ async function scrapeItem(
     console.log(`Fetching item ${auctionetId}`);
     const html = await fetchAuctionetHtml(itemUrl);
     const item = extractAuctionetItemJson(html, itemUrl, auctionetId);
+    await mkdir(destinationDir, { recursive: true });
     await writeJsonFile(filePath, item);
     manifest.saved_item_count += 1;
   } catch (error) {
