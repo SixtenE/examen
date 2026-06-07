@@ -9,10 +9,19 @@ import { motion } from "motion/react";
 import { listItem, staggerContainer } from "@/lib/motion";
 import { UploadDialog } from "@/components/upload-dialog";
 import { useParams } from "next/navigation";
+import Image from "next/image";
 
 export default function Page() {
   const { id } = useParams<{ id: string }>();
-
+  const { data } = useQuery(
+    queryOptions<{
+      id: string;
+      image_url: string;
+    }>({
+      queryKey: ["query", id],
+      queryFn: () => fetch(`/api/queries/${id}`).then((res) => res.json()),
+    }),
+  );
   return (
     <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-20 pb-64">
       <motion.ul
@@ -36,6 +45,15 @@ export default function Page() {
             >
               Image {id}
             </motion.h1>
+            {data?.image_url && (
+              <Image
+                src={data.image_url}
+                alt="Image"
+                width={100}
+                height={100}
+                className="asdasdas"
+              />
+            )}
           </div>
         </motion.li>
         {Array.from({ length: 1 }).map((_, index) => (

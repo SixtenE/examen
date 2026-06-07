@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { queryOptions, useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Loader2, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
 import { queryClient } from "@/components/providers";
 import { motion } from "motion/react";
 import { listItem, staggerContainer } from "@/lib/motion";
 import { UploadDialog } from "@/components/upload-dialog";
+import { useDropzone } from "react-dropzone";
+import { useUploadImage } from "@/lib/use-upload-image";
 
 export default function Page() {
   const { data } = useQuery(
@@ -61,82 +63,133 @@ export default function Page() {
     },
   });
 
+  const uploadMutation = useUploadImage();
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    accept: {
+      "image/*": [],
+    },
+    disabled: uploadMutation.isPending,
+    multiple: false,
+    noClick: true,
+    noKeyboard: true,
+    onDropAccepted: ([file]) => {
+      if (file) {
+        uploadMutation.mutate(file);
+      }
+    },
+    onDropRejected: () => {
+      toast.error("Drop an image file to upload");
+    },
+  });
+
   if (!data) return null;
 
   return (
-    <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-20 pb-64">
-      <motion.ul
-        className="grid grid-cols-1 gap-0.5 sm:grid-cols-2 lg:grid-cols-3"
-        variants={staggerContainer}
-        initial="hidden"
-        animate="show"
-      >
-        <motion.li
-          key="upload"
+    <div {...getRootProps({ className: "min-h-screen" })}>
+      <input {...getInputProps()} />
+      {(isDragActive || uploadMutation.isPending) && (
+        <motion.div
+          className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="row-span-2"
+          exit={{ opacity: 0 }}
         >
-          <div className="bg-card row-span-2 flex h-full w-full flex-col justify-between gap-4 rounded-4xl px-7 py-5">
-            <motion.h1
-              initial={{ y: -5, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.1 }}
-              className="col-span-2 text-lg font-semibold"
-            >
-              Upload image to analyze
-            </motion.h1>
-
-            <motion.div
-              initial={{ opacity: 0, y: 5 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.15 }}
-            >
-              <UploadDialog />
-            </motion.div>
+          <div className="bg-card flex min-w-72 flex-col items-center gap-4 rounded-4xl border border-dashed px-8 py-10 text-center shadow-lg">
+            {uploadMutation.isPending ? (
+              <Loader2 className="text-muted-foreground size-10 animate-spin" />
+            ) : (
+              <UploadCloud className="text-muted-foreground size-10" />
+            )}
+            <div>
+              <p className="text-lg font-semibold">
+                {uploadMutation.isPending
+                  ? "Uploading image..."
+                  : "Drop image to upload"}
+              </p>
+              <p className="text-muted-foreground text-sm">
+                {uploadMutation.isPending
+                  ? "Hang tight while we process it."
+                  : "Release anywhere on the page."}
+              </p>
+            </div>
           </div>
-        </motion.li>
-        {data.map((query, index) => (
+        </motion.div>
+      )}
+
+      <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-20 pb-64">
+        <motion.ul
+          className="grid grid-cols-1 gap-0.5 sm:grid-cols-2 lg:grid-cols-3"
+          variants={staggerContainer}
+          initial="hidden"
+          animate="show"
+        >
           <motion.li
-            key={query.id}
-            variants={listItem}
-            initial="hidden"
-            animate="show"
-            custom={index + 1}
-            tabIndex={-1}
-            whileHover={{ opacity: 0.8 }}
-            whileTap={{
-              scale: 0.98,
-              transition: { type: "spring", stiffness: 400, damping: 30 },
-            }}
+            key="upload"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="row-span-2"
           >
-            <Link
-              href={`/${query.id}`}
-              className="bg-card flex h-28 w-full flex-col justify-between gap-4 rounded-4xl py-5 pr-5 pl-7"
+            <div className="bg-card row-span-2 flex h-full w-full flex-col justify-between gap-4 rounded-4xl px-7 py-5">
+              <motion.h1
+                initial={{ y: -5, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.1 }}
+                className="col-span-2 text-lg font-semibold"
+              >
+                Upload image to analyze
+              </motion.h1>
+
+              <motion.div
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.15 }}
+              >
+                <UploadDialog />
+              </motion.div>
+            </div>
+          </motion.li>
+          {data.map((query, index) => (
+            <motion.li
+              key={query.id}
+              variants={listItem}
+              initial="hidden"
+              animate="show"
+              custom={index + 1}
+              tabIndex={-1}
+              whileHover={{ opacity: 0.8 }}
+              whileTap={{
+                scale: 0.98,
+                transition: { type: "spring", stiffness: 400, damping: 30 },
+              }}
             >
-              <div className="flex items-center justify-between gap-2">
+              <Link
+                href={`/${query.id}`}
+                className="bg-card flex h-28 w-full flex-col justify-between gap-4 rounded-4xl py-5 pr-5 pl-7"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <motion.p
+                    initial={{ y: -5, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ delay: 0.05 * (index + 1) }}
+                    className="text-muted-foreground text-sm font-medium tracking-tight"
+                  >
+                    {"1 day ago"}
+                  </motion.p>
+                  <ArrowRight className="text-muted-foreground" />
+                </div>
                 <motion.p
-                  initial={{ y: -5, opacity: 0 }}
+                  initial={{ y: 5, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
                   transition={{ delay: 0.05 * (index + 1) }}
-                  className="text-muted-foreground text-sm font-medium tracking-tight"
+                  className="text-2xl font-semibold tracking-tighter"
                 >
-                  {"1 day ago"}
+                  {"polished-heirloom"}
                 </motion.p>
-                <ArrowRight className="text-muted-foreground" />
-              </div>
-              <motion.p
-                initial={{ y: 5, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ delay: 0.05 * (index + 1) }}
-                className="text-2xl font-semibold tracking-tighter"
-              >
-                {"polished-heirloom"}
-              </motion.p>
-            </Link>
-          </motion.li>
-        ))}
-      </motion.ul>
-    </main>
+              </Link>
+            </motion.li>
+          ))}
+        </motion.ul>
+      </main>
+    </div>
   );
 }
