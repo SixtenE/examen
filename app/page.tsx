@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { queryOptions, useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowRight, Loader2, UploadCloud } from "lucide-react";
+import { ArrowRight, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { queryClient } from "@/components/providers";
 import { motion } from "motion/react";
@@ -89,16 +89,16 @@ export default function Page() {
       <input {...getInputProps()} />
       {(isDragActive || uploadMutation.isPending) && (
         <motion.div
-          className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+          className="bg-background/80 pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
-          <div className="bg-card flex min-w-72 flex-col items-center gap-4 rounded-4xl border border-dashed px-8 py-10 text-center shadow-lg">
+          <div className="flex flex-col items-center justify-center gap-4 text-center">
             {uploadMutation.isPending ? (
               <Loader2 className="text-muted-foreground size-10 animate-spin" />
             ) : (
-              <UploadCloud className="text-muted-foreground size-10" />
+              <Upload className="text-muted-foreground size-10" />
             )}
             <div>
               <p className="text-lg font-semibold">
@@ -117,37 +117,30 @@ export default function Page() {
       )}
 
       <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-20 pb-64">
+        <div className="bg-card flex h-48 w-1/3 flex-col justify-between gap-4 rounded-4xl px-7 py-5">
+          <motion.h1
+            initial={{ y: -5, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ delay: 0.1 }}
+            className="text-lg font-semibold"
+          >
+            Upload image to analyze
+          </motion.h1>
+
+          <motion.div
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 }}
+          >
+            <UploadDialog />
+          </motion.div>
+        </div>
         <motion.ul
           className="grid grid-cols-1 gap-0.5 sm:grid-cols-2 lg:grid-cols-3"
           variants={staggerContainer}
           initial="hidden"
           animate="show"
         >
-          <motion.li
-            key="upload"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="row-span-2"
-          >
-            <div className="bg-card row-span-2 flex h-full w-full flex-col justify-between gap-4 rounded-4xl px-7 py-5">
-              <motion.h1
-                initial={{ y: -5, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ delay: 0.1 }}
-                className="col-span-2 text-lg font-semibold"
-              >
-                Upload image to analyze
-              </motion.h1>
-
-              <motion.div
-                initial={{ opacity: 0, y: 5 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.15 }}
-              >
-                <UploadDialog />
-              </motion.div>
-            </div>
-          </motion.li>
           {data.map((query, index) => (
             <motion.li
               key={query.id}
