@@ -2,9 +2,7 @@
 
 import * as React from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation } from "@tanstack/react-query";
 import { Controller, useForm } from "react-hook-form";
-import { toast } from "sonner";
 import * as z from "zod";
 
 import { Button } from "@/components/ui/button";
@@ -24,16 +22,13 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { InputGroup, InputGroupInput } from "@/components/ui/input-group";
-import { useRouter } from "next/navigation";
-import { queryClient } from "@/components/providers";
+import { useUploadImage } from "@/lib/use-upload-image";
 
 const formSchema = z.object({
   file: z.instanceof(File),
 });
 
 export function UploadForm() {
-  const router = useRouter();
-
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -41,34 +36,12 @@ export function UploadForm() {
     },
   });
 
-  const uploadMutation = useMutation({
-    mutationFn: async (data: z.infer<typeof formSchema>) => {
-      const formData = new FormData();
-      formData.append("file", data.file);
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-      if (!response.ok) {
-        throw new Error("Failed to upload file");
-      }
-      const result = (await response.json()) as { id: string; key: string };
-
-      return result;
-    },
-    onSuccess: (result) => {
-      toast.success("File uploaded successfully");
-      form.reset();
-      queryClient.invalidateQueries({ queryKey: ["queries"] });
-      router.push(`/${result.id}`);
-    },
-    onError: () => {
-      toast.error("Failed to upload file");
-    },
+  const uploadMutation = useUploadImage({
+    onSuccess: () => form.reset(),
   });
 
   function onSubmit(data: z.infer<typeof formSchema>) {
-    uploadMutation.mutate(data);
+    uploadMutation.mutate(data.file);
   }
 
   return (

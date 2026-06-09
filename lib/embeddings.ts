@@ -1,7 +1,10 @@
 const EMBEDDING_MODEL = "google/gemini-embedding-2";
 const EMBEDDING_DIMENSIONS = 768;
 
-export async function embedImageUrl(imageUrl: string): Promise<number[]> {
+export async function embedImageUrl(
+  imageUrl: string,
+  dimensions?: number,
+): Promise<number[]> {
   const response = await fetch("https://openrouter.ai/api/v1/embeddings", {
     method: "POST",
     headers: {
@@ -23,7 +26,7 @@ export async function embedImageUrl(imageUrl: string): Promise<number[]> {
         },
       ],
       encoding_format: "float",
-      dimensions: EMBEDDING_DIMENSIONS,
+      dimensions: dimensions ?? EMBEDDING_DIMENSIONS,
     }),
   });
 

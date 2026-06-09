@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "embed:auctionet-vectors": "tsx scripts/embed-auctionet-vectors.ts",
+    "organize:auctionet-items": "tsx scripts/organize-auctionet-items.ts",
     "scrape:auctionet": "tsx scripts/scrape-auctionet.ts",
     "test": "vitest"
   },
