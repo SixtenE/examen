@@ -1,28 +1,13 @@
 "use client";
 
-import * as React from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, useForm } from "react-hook-form";
 import * as z from "zod";
 
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Field,
-  FieldDescription,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
-import { InputGroup, InputGroupInput } from "@/components/ui/input-group";
 import { useUploadImage } from "@/lib/use-upload-image";
+import { motion } from "motion/react";
+import { Input } from "./ui/input";
 
 const formSchema = z.object({
   file: z.instanceof(File),
@@ -45,68 +30,58 @@ export function UploadForm() {
   }
 
   return (
-    <Card className="w-full sm:max-w-md">
-      <CardHeader>
-        <CardTitle>Upload Image</CardTitle>
-        <CardDescription>Upload an image to the database.</CardDescription>
-      </CardHeader>
-      <CardContent>
+    <div className="bg-card flex h-[226px] w-full flex-col justify-between gap-4 rounded-4xl px-7 py-5">
+      <motion.h1
+        initial={{ y: -5, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ delay: 0.1 }}
+        className="text-lg font-semibold"
+      >
+        Upload image to analyze
+      </motion.h1>
+
+      <motion.div
+        initial={{ opacity: 0, y: 5 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.15 }}
+      >
         <form id="form-upload" onSubmit={form.handleSubmit(onSubmit)}>
-          <FieldGroup>
-            <Controller
-              name="file"
-              control={form.control}
-              render={({ field, fieldState }) => {
-                const { value, ...fieldProps } = field;
-                void value;
-                return (
-                  <Field data-invalid={fieldState.invalid}>
-                    <FieldLabel htmlFor="form-rhf-demo-file">
-                      Upload an image
-                    </FieldLabel>
-                    <InputGroup>
-                      <InputGroupInput
-                        {...fieldProps}
-                        id="form-rhf-demo-file"
-                        placeholder="Upload an image"
-                        type="file"
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                          field.onChange(e.target.files?.[0] ?? null);
-                        }}
-                      />
-                    </InputGroup>
-                    <FieldDescription>
-                      Upload an image to the database.
-                    </FieldDescription>
-                    {fieldState.invalid && (
-                      <FieldError errors={[fieldState.error]} />
-                    )}
-                  </Field>
-                );
-              }}
-            />
-          </FieldGroup>
+          <Controller
+            name="file"
+            control={form.control}
+            render={({ field }) => {
+              const { value, ...fieldProps } = field;
+              const fileName = value?.name ?? "Choose image";
+
+              return (
+                <div className="flex flex-col gap-2">
+                  <Button
+                    asChild
+                    className="w-full rounded-2xl py-6 font-semibold"
+                  >
+                    <label htmlFor="file">{fileName}</label>
+                  </Button>
+
+                  <Input
+                    {...fieldProps}
+                    id="file"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="sr-only"
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                      field.onChange(e.target.files?.[0] ?? null);
+                    }}
+                  />
+
+                  <p className="text-muted-foreground text-xs">
+                    PNG, JPG, JPEG, WEBP Max size: 2MB
+                  </p>
+                </div>
+              );
+            }}
+          />
         </form>
-      </CardContent>
-      <CardFooter>
-        <Field orientation="horizontal">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => form.reset()}
-            disabled={uploadMutation.isPending || !form.formState.isValid}
-          >
-            Reset
-          </Button>
-          <Button
-            type="submit"
-            form="form-upload"
-            disabled={uploadMutation.isPending}
-          >
-            {uploadMutation.isPending ? "Loading..." : "Submit"}
-          </Button>
-        </Field>
-      </CardFooter>
-    </Card>
+      </motion.div>
+    </div>
   );
 }

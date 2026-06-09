@@ -7,20 +7,21 @@ import { toast } from "sonner";
 import { queryClient } from "@/components/providers";
 import { motion } from "motion/react";
 import { listItem, staggerContainer } from "@/lib/motion";
-import { UploadDialog } from "@/components/upload-dialog";
 import { useDropzone } from "react-dropzone";
 import { useUploadImage } from "@/lib/use-upload-image";
+import { UploadForm } from "@/components/upload-form";
+import { relativeTimeUntilNow } from "@/lib/utils";
+
+type QueryListItem = {
+  id: string;
+  image_key: string;
+  image_url: string;
+  createdAt: string;
+};
 
 export default function Page() {
   const { data } = useQuery(
-    queryOptions<
-      {
-        id: string;
-        image_key: string;
-        image_url: string;
-        createdAt: Date;
-      }[]
-    >({
+    queryOptions<QueryListItem[]>({
       queryKey: ["queries"],
       queryFn: () => fetch("/api/queries").then((res) => res.json()),
     }),
@@ -40,7 +41,7 @@ export default function Page() {
       await queryClient.cancelQueries({ queryKey: ["queries"] });
 
       const previousQueries = queryClient.getQueryData<
-        { id: string; image_key: string; image_url: string; createdAt: Date }[]
+        QueryListItem[]
       >(["queries"]);
 
       queryClient.setQueryData(["queries"], (old: typeof previousQueries) =>
@@ -117,30 +118,40 @@ export default function Page() {
       )}
 
       <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-20 pb-64">
-        <div className="bg-card flex h-48 w-1/3 flex-col justify-between gap-4 rounded-4xl px-7 py-5">
-          <motion.h1
-            initial={{ y: -5, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.1 }}
-            className="text-lg font-semibold"
-          >
-            Upload image to analyze
-          </motion.h1>
-
-          <motion.div
-            initial={{ opacity: 0, y: 5 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.15 }}
-          >
-            <UploadDialog />
-          </motion.div>
-        </div>
         <motion.ul
           className="grid grid-cols-1 gap-0.5 sm:grid-cols-2 lg:grid-cols-3"
           variants={staggerContainer}
           initial="hidden"
           animate="show"
         >
+          <motion.li
+            key="upload"
+            variants={listItem}
+            initial="hidden"
+            animate="show"
+            custom={0}
+            className="row-span-2"
+          >
+            {/* <div className="bg-card flex h-[225.5px] w-full flex-col justify-between gap-4 rounded-4xl px-7 py-5">
+              <motion.h1
+                initial={{ y: -5, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.1 }}
+                className="text-lg font-semibold"
+              >
+                Upload image to analyze
+              </motion.h1>
+
+              <motion.div
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.15 }}
+              >
+                <UploadDialog />
+              </motion.div>
+            </div> */}
+            <UploadForm />
+          </motion.li>
           {data.map((query, index) => (
             <motion.li
               key={query.id}
@@ -166,7 +177,7 @@ export default function Page() {
                     transition={{ delay: 0.05 * (index + 1) }}
                     className="text-muted-foreground text-sm font-medium tracking-tight"
                   >
-                    {"1 day ago"}
+                    {relativeTimeUntilNow(query.createdAt)}
                   </motion.p>
                   <ArrowRight className="text-muted-foreground" />
                 </div>
