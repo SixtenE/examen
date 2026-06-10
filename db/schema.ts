@@ -28,6 +28,10 @@ export const matches = pgTable("matches", {
     .notNull()
     .references(() => queries.id),
   auctionet_id: varchar("auctionet_id").notNull(),
+  image_url: varchar("image_url").notNull(),
+  title: varchar("title").notNull(),
+  price: real("price").notNull(),
+  currency: varchar("currency").notNull(),
   similarity_score: real("similarity_score").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

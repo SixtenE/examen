@@ -118,6 +118,10 @@ export async function POST(
           query_id: id,
           auctionet_id: auctionetId,
           similarity_score: result.score,
+          image_url: result.payload?.image_url ?? "",
+          title: result.payload?.title ?? "",
+          price: result.payload?.price ?? 0,
+          currency: result.payload?.currency ?? "",
         };
       })
       .filter((row): row is NonNullable<typeof row> => row !== null);

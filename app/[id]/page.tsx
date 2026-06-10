@@ -8,9 +8,12 @@ import { listItem, staggerContainer } from "@/lib/motion";
 import { useParams } from "next/navigation";
 import Image from "next/image";
 import { useEffect } from "react";
-import { queries } from "@/db/schema";
+import { matches, queries } from "@/db/schema";
+import { Badge } from "@/components/ui/badge";
 
 type QueryData = typeof queries.$inferSelect & { image_url: string };
+
+type MatchData = typeof matches.$inferSelect;
 
 export default function Page() {
   const { id } = useParams<{ id: string }>();
@@ -22,13 +25,7 @@ export default function Page() {
   );
 
   const { data: matchesData } = useQuery(
-    queryOptions<
-      {
-        id: string;
-        auctionet_id: string;
-        similarity_score: number;
-      }[]
-    >({
+    queryOptions<MatchData[]>({
       queryKey: ["matches", id],
       queryFn: () =>
         fetch(`/api/queries/${id}/matches`).then((res) => res.json()),
@@ -54,7 +51,7 @@ export default function Page() {
   return (
     <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-20 pb-64">
       <div className="grid grid-cols-1 gap-0.5 sm:grid-cols-2">
-        <div className="bg-card flex h-full w-full flex-col justify-between gap-4 rounded-4xl px-7 py-5">
+        <div className="bg-card flex h-fit w-full flex-col justify-between gap-4 rounded-4xl px-7 py-5">
           <motion.h1
             initial={{ y: -5, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -131,7 +128,7 @@ export default function Page() {
                   className="bg-card flex h-28 w-full gap-4 rounded-4xl"
                 >
                   <Image
-                    src="https://images.auctionet.com/uploads/item_1436318_a4690f2d76.jpg"
+                    src={match.image_url}
                     alt="Image"
                     width={100}
                     height={100}
@@ -144,9 +141,9 @@ export default function Page() {
                         initial={{ y: -5, opacity: 0 }}
                         animate={{ y: 0, opacity: 1 }}
                         transition={{ delay: 0.05 * (index + 1) }}
-                        className="text-muted-foreground text-sm font-medium tracking-tight"
+                        className="text-muted-foreground line-clamp-1 w-3/4 text-sm font-medium tracking-tight"
                       >
-                        {match.auctionet_id}
+                        {match.title}
                       </motion.p>
                       <ArrowUpRight className="text-muted-foreground" />
                     </div>
@@ -154,9 +151,13 @@ export default function Page() {
                       initial={{ y: 5, opacity: 0 }}
                       animate={{ y: 0, opacity: 1 }}
                       transition={{ delay: 0.05 * (index + 1) }}
-                      className="text-2xl font-semibold tracking-tighter"
+                      className="flex items-center gap-2 text-2xl font-semibold tracking-tighter"
                     >
-                      {`${Math.round(match.similarity_score * 100)}% match`}
+                      {match.price} {match.currency}
+                      <Badge
+                        className="tracking-normal"
+                        variant="secondary"
+                      >{`${Math.round(match.similarity_score * 100)}% match`}</Badge>
                     </motion.p>
                   </div>
                 </Link>
