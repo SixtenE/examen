@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { queryOptions, useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, Loader2 } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Loader2,
+  Settings,
+  Settings2,
+} from "lucide-react";
 import { motion } from "motion/react";
 import { listItem, staggerContainer } from "@/lib/motion";
 import { useParams } from "next/navigation";
@@ -10,6 +16,7 @@ import Image from "next/image";
 import { useEffect } from "react";
 import { matches, queries } from "@/db/schema";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 type QueryData = typeof queries.$inferSelect & { image_url: string };
 
@@ -50,16 +57,26 @@ export default function Page() {
 
   return (
     <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-20 pb-64">
-      <div className="grid grid-cols-1 gap-0.5 sm:grid-cols-2">
-        <div className="bg-card flex h-fit w-full flex-col justify-between gap-4 rounded-4xl px-7 py-5">
-          <motion.h1
-            initial={{ y: -5, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.1 }}
-            className="text-lg font-semibold"
-          >
-            {data.title}
-          </motion.h1>
+      <div className="grid grid-cols-1 gap-0.5 sm:grid-cols-3">
+        <div className="bg-card flex h-fit w-full flex-col justify-between gap-4 rounded-4xl p-5">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon" asChild>
+              <Link href="/">
+                <ArrowLeft className="size-6 stroke-2" />
+              </Link>
+            </Button>
+            <motion.h1
+              initial={{ y: -5, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.1 }}
+              className="text-xl font-semibold"
+            >
+              {data.title}
+            </motion.h1>
+            <Button variant="ghost" size="icon" className="ml-auto">
+              <Settings className="size-5 stroke-2" />
+            </Button>
+          </div>
           {data.image_url && (
             <Image
               src={data.image_url}
@@ -73,7 +90,7 @@ export default function Page() {
         </div>
 
         <motion.ul
-          className="grid grid-cols-1 gap-0.5"
+          className="col-span-2 grid grid-cols-2 gap-0.5"
           variants={staggerContainer}
           initial="hidden"
           animate="show"
@@ -125,23 +142,23 @@ export default function Page() {
                 <Link
                   href={`https://www.auctionet.com/${match.auctionet_id}`}
                   target="_blank"
-                  className="bg-card flex h-28 w-full gap-4 rounded-4xl"
+                  className="bg-card flex h-28 w-full rounded-4xl"
                 >
                   <Image
                     src={match.image_url}
                     alt="Image"
                     width={500}
                     height={500}
-                    className="aspect-square h-full w-auto rounded-4xl p-2"
+                    className="pointer-events-none aspect-square h-full w-auto rounded-4xl object-cover p-2"
                     loading="eager"
                   />
-                  <div className="flex w-full flex-col gap-2 p-5">
+                  <div className="flex w-full flex-col gap-2 py-5 pr-5 pl-3">
                     <div className="flex items-center justify-between gap-2">
                       <motion.p
                         initial={{ y: -5, opacity: 0 }}
                         animate={{ y: 0, opacity: 1 }}
                         transition={{ delay: 0.05 * (index + 1) }}
-                        className="text-muted-foreground line-clamp-1 w-3/4 text-sm font-medium tracking-tight"
+                        className="text-muted-foreground line-clamp-2 w-3/4 text-sm font-medium tracking-tight"
                       >
                         {match.title}
                       </motion.p>
