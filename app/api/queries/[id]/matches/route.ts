@@ -10,6 +10,21 @@ import type { NextRequest } from "next/server";
 
 const MATCH_LIMIT = 32;
 
+type ReferencePayload = {
+  auctionet_id: string;
+  image_index: number;
+  image_url: string;
+  title: string;
+  price: number;
+  currency: string;
+  source_url: string;
+};
+
+type ReferenceSearchHit = {
+  score: number;
+  payload?: ReferencePayload | null;
+};
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -86,11 +101,11 @@ export async function POST(
 
     const vector = await embedImageUrl(imageUrl);
 
-    const searchResults = await qdrantClient.search("references", {
+    const searchResults = (await qdrantClient.search("references", {
       vector,
       limit: MATCH_LIMIT,
       with_payload: true,
-    });
+    })) as ReferenceSearchHit[];
 
     const rows = searchResults
       .map((result) => {
