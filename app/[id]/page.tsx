@@ -83,7 +83,7 @@ export default function Page() {
               alt="Image"
               width={1500}
               height={1500}
-              className="w-1/2 rounded-lg"
+              className="aspect-square h-auto w-full rounded-lg object-cover"
               loading="eager"
             />
           )}

@@ -3,9 +3,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import Page from "../app/page";
 import Providers from "../components/providers";
 
+const push = vi.fn();
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
-    push: vi.fn(),
+    push,
     replace: vi.fn(),
     prefetch: vi.fn(),
     back: vi.fn(),
@@ -22,7 +24,15 @@ function renderPage() {
   );
 }
 
+function mockQueriesFetch() {
+  return Promise.resolve({
+    ok: true,
+    json: async () => ({ items: [], nextCursor: null }),
+  });
+}
+
 afterEach(() => {
+  push.mockClear();
   vi.restoreAllMocks();
 });
 
@@ -35,28 +45,23 @@ test("submitting the form uploads the selected file", async () => {
       });
     }
 
-    return Promise.resolve({
-      ok: true,
-      json: async () => [],
-    });
+    if (url.startsWith("/api/queries")) {
+      return mockQueriesFetch();
+    }
+
+    return Promise.resolve({ ok: true, json: async () => ({}) });
   });
   vi.stubGlobal("fetch", fetchMock);
 
   renderPage();
 
   const file = new File(["hello"], "hello.png", { type: "image/png" });
-  const input = screen.getByLabelText("Upload an image") as HTMLInputElement;
+  const input = screen.getByLabelText("Choose image") as HTMLInputElement;
   fireEvent.change(input, { target: { files: [file] } });
-
-  fireEvent.submit(screen.getByLabelText("Upload an image").closest("form")!);
 
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/upload",
-      expect.objectContaining({ method: "POST" }),
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/queries/abc/matches",
       expect.objectContaining({ method: "POST" }),
     );
   });
@@ -71,47 +76,51 @@ test("redirects to the query page after successful upload", async () => {
       });
     }
 
-    return Promise.resolve({
-      ok: true,
-      json: async () => [],
-    });
+    if (url.startsWith("/api/queries")) {
+      return mockQueriesFetch();
+    }
+
+    return Promise.resolve({ ok: true, json: async () => ({}) });
   });
   vi.stubGlobal("fetch", fetchMock);
 
   renderPage();
 
   const file = new File(["hello"], "hello.png", { type: "image/png" });
-  const input = screen.getByLabelText("Upload an image") as HTMLInputElement;
+  const input = screen.getByLabelText("Choose image") as HTMLInputElement;
   fireEvent.change(input, { target: { files: [file] } });
-
-  fireEvent.submit(screen.getByLabelText("Upload an image").closest("form")!);
 
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/upload",
       expect.objectContaining({ method: "POST" }),
     );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/queries/abc/matches",
-      expect.objectContaining({ method: "POST" }),
-    );
+    expect(push).toHaveBeenCalledWith("/abc");
   });
 });
 
 test("shows an error message if the upload fails", async () => {
-  const fetchMock = vi.fn().mockResolvedValue({
-    ok: false,
-    json: async () => ({ error: "Upload failed" }),
+  const fetchMock = vi.fn().mockImplementation((url: string) => {
+    if (url === "/api/upload") {
+      return Promise.resolve({
+        ok: false,
+        json: async () => ({ error: "Upload failed" }),
+      });
+    }
+
+    if (url.startsWith("/api/queries")) {
+      return mockQueriesFetch();
+    }
+
+    return Promise.resolve({ ok: true, json: async () => ({}) });
   });
   vi.stubGlobal("fetch", fetchMock);
 
   renderPage();
 
   const file = new File(["hello"], "hello.png", { type: "image/png" });
-  const input = screen.getByLabelText("Upload an image") as HTMLInputElement;
+  const input = screen.getByLabelText("Choose image") as HTMLInputElement;
   fireEvent.change(input, { target: { files: [file] } });
-
-  fireEvent.submit(screen.getByLabelText("Upload an image").closest("form")!);
 
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
@@ -122,19 +131,27 @@ test("shows an error message if the upload fails", async () => {
 });
 
 test("shows error when uploading a file that is not an image", async () => {
-  const fetchMock = vi.fn().mockResolvedValue({
-    ok: false,
-    json: async () => ({ error: "File is not an image" }),
+  const fetchMock = vi.fn().mockImplementation((url: string) => {
+    if (url === "/api/upload") {
+      return Promise.resolve({
+        ok: false,
+        json: async () => ({ error: "File is not an image" }),
+      });
+    }
+
+    if (url.startsWith("/api/queries")) {
+      return mockQueriesFetch();
+    }
+
+    return Promise.resolve({ ok: true, json: async () => ({}) });
   });
   vi.stubGlobal("fetch", fetchMock);
 
   renderPage();
 
   const file = new File(["hello"], "hello.txt", { type: "text/plain" });
-  const input = screen.getByLabelText("Upload an image") as HTMLInputElement;
+  const input = screen.getByLabelText("Choose image") as HTMLInputElement;
   fireEvent.change(input, { target: { files: [file] } });
-
-  fireEvent.submit(screen.getByLabelText("Upload an image").closest("form")!);
 
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(

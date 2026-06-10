@@ -1,34 +1,86 @@
 import { db } from "@/db";
 import { queries } from "@/db/schema";
 import { NextRequest, NextResponse } from "next/server";
-import { desc } from "drizzle-orm";
-import { s3Client } from "@/lib/s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { and, desc, eq, lt, or } from "drizzle-orm";
 
-export async function GET() {
+const DEFAULT_LIMIT = 12;
+const MAX_LIMIT = 50;
+
+type QueryCursor = {
+  createdAt: string;
+  id: string;
+};
+
+function encodeCursor(cursor: QueryCursor): string {
+  return Buffer.from(JSON.stringify(cursor)).toString("base64url");
+}
+
+function decodeCursor(value: string): QueryCursor | null {
   try {
+    const parsed = JSON.parse(
+      Buffer.from(value, "base64url").toString("utf8"),
+    ) as QueryCursor;
+    if (
+      typeof parsed.createdAt !== "string" ||
+      typeof parsed.id !== "string" ||
+      Number.isNaN(Date.parse(parsed.createdAt))
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = request.nextUrl;
+    const limitParam = Number.parseInt(searchParams.get("limit") ?? "", 10);
+    const limit = Number.isNaN(limitParam)
+      ? DEFAULT_LIMIT
+      : Math.min(Math.max(limitParam, 1), MAX_LIMIT);
+
+    const cursorParam = searchParams.get("cursor");
+    const cursor = cursorParam ? decodeCursor(cursorParam) : null;
+
+    if (cursorParam && !cursor) {
+      return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
+    }
+
+    const cursorDate = cursor ? new Date(cursor.createdAt) : null;
+
     const results = await db
       .select()
       .from(queries)
-      .orderBy(desc(queries.createdAt));
+      .where(
+        cursor && cursorDate
+          ? or(
+              lt(queries.createdAt, cursorDate),
+              and(
+                eq(queries.createdAt, cursorDate),
+                lt(queries.id, cursor.id),
+              ),
+            )
+          : undefined,
+      )
+      .orderBy(desc(queries.createdAt), desc(queries.id))
+      .limit(limit + 1);
 
-    const resultsWithImageUrls = await Promise.all(
-      results.map(async (result) => {
-        const image_url = await getSignedUrl(
-          s3Client,
-          new GetObjectCommand({
-            Bucket: process.env.AWS_BUCKET_NAME,
-            Key: result.image_key,
-          }),
-          {
-            expiresIn: 60 * 60, // 1 hour
-          },
-        );
-        return { ...result, image_url };
-      }),
-    );
-    return NextResponse.json(resultsWithImageUrls);
+    const hasMore = results.length > limit;
+    const items = hasMore ? results.slice(0, limit) : results;
+    const lastItem = items.at(-1);
+
+    return NextResponse.json({
+      items,
+      nextCursor:
+        hasMore && lastItem
+          ? encodeCursor({
+              createdAt: lastItem.createdAt.toISOString(),
+              id: lastItem.id,
+            })
+          : null,
+    });
   } catch {
     return NextResponse.json(
       { error: "Internal server error" },
@@ -37,4 +89,4 @@ export async function GET() {
   }
 }
 
-export async function POST(request: NextRequest) {}
+export async function POST(_request: NextRequest) {}
