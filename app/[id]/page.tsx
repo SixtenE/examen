@@ -64,8 +64,8 @@ export default function Page() {
             <Image
               src={data.image_url}
               alt="Image"
-              width={100}
-              height={100}
+              width={1500}
+              height={1500}
               className="w-1/2 rounded-lg"
               loading="eager"
             />
@@ -130,8 +130,8 @@ export default function Page() {
                   <Image
                     src={match.image_url}
                     alt="Image"
-                    width={100}
-                    height={100}
+                    width={500}
+                    height={500}
                     className="aspect-square h-full w-auto rounded-4xl p-2"
                     loading="eager"
                   />
