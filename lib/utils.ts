@@ -13,7 +13,7 @@ export function relativeTimeUntilNow(target: Date | string): string {
 
   const abs = Math.abs(diffSec);
 
-  if (abs < 60) return rtf.format(diffSec, "second");
+  if (abs < 60) return diffSec < 0 ? "<1 minute ago" : "<1 minute from now";
   if (abs < 3600) return rtf.format(Math.round(diffSec / 60), "minute");
   if (abs < 86400) return rtf.format(Math.round(diffSec / 3600), "hour");
   if (abs < 604800) return rtf.format(Math.round(diffSec / 86400), "day");
