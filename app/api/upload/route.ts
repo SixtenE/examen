@@ -7,7 +7,9 @@ import { queries } from "@/db/schema";
 import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { s3Client } from "@/lib/s3";
 
-const MAX_UPLOAD_BYTES = 2 * 1024 * 1024; // 2MB
+const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15MB
+const STORED_MAX_EDGE = 1500;
+const STORED_JPEG_QUALITY = 80;
 
 const AUCTION_NOUNS = [
   "Gavel",
@@ -158,7 +160,7 @@ export async function POST(request: NextRequest) {
 
     if (file.size > MAX_UPLOAD_BYTES) {
       return NextResponse.json(
-        { error: "File too large (max 10MB)" },
+        { error: "File too large (max 15MB)" },
         { status: 413 },
       );
     }
@@ -199,18 +201,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // compress oversized images (>2MB)
-    if (body.length > 2 * 1024 * 1024) {
-      try {
-        body = await sharp(body).jpeg({ quality: 100 }).toBuffer();
-        contentType = "image/jpeg";
-      } catch (error) {
-        console.error("upload route image compression error:", error);
-        return NextResponse.json(
-          { error: "Unsupported or corrupt image" },
-          { status: 400 },
-        );
-      }
+    try {
+      body = await sharp(body)
+        .rotate()
+        .resize(STORED_MAX_EDGE, STORED_MAX_EDGE, {
+          fit: "inside",
+          withoutEnlargement: true,
+        })
+        .jpeg({ quality: STORED_JPEG_QUALITY })
+        .toBuffer();
+      contentType = "image/jpeg";
+    } catch (error) {
+      console.error("upload route image processing error:", error);
+      return NextResponse.json(
+        { error: "Unsupported or corrupt image" },
+        { status: 400 },
+      );
     }
 
     const key = nanoid();

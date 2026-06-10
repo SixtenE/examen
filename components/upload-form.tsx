@@ -208,7 +208,7 @@ function UploadFormCard() {
                     {...fieldProps}
                     id="file"
                     type="file"
-                    accept="image/png,image/jpeg,image/webp"
+                    accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
                     className="sr-only"
                     disabled={uploadMutation.isPending}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
@@ -225,7 +225,7 @@ function UploadFormCard() {
                   />
 
                   <p className="text-muted-foreground text-center text-xs">
-                    PNG, JPG, JPEG, WEBP, HEIC, HEIF. Max size: 2MB
+                    PNG, JPG, JPEG, WEBP, HEIC, HEIF. Max size: 15MB
                   </p>
                 </div>
               );
