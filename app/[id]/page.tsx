@@ -69,7 +69,7 @@ export default function Page() {
               initial={{ y: -5, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               transition={{ delay: 0.1 }}
-              className="text-xl font-semibold"
+              className="line-clamp-1 text-xl font-semibold"
             >
               {data.title}
             </motion.h1>
@@ -90,7 +90,7 @@ export default function Page() {
         </div>
 
         <motion.ul
-          className="col-span-2 grid grid-cols-2 gap-0.5"
+          className="col-span-2 grid grid-cols-1 gap-0.5 lg:grid-cols-2"
           variants={staggerContainer}
           initial="hidden"
           animate="show"
