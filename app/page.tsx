@@ -75,7 +75,7 @@ export default function Page() {
             initial="hidden"
             animate="show"
             custom={0}
-            className="row-span-2"
+            className="row-span-2 min-w-0"
           >
             <UploadForm />
           </motion.li>
@@ -86,6 +86,7 @@ export default function Page() {
               initial="hidden"
               animate="show"
               custom={index + 1}
+              className="min-w-0"
               tabIndex={-1}
               whileHover={{ opacity: 0.8 }}
               whileTap={{

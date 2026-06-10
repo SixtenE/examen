@@ -6,7 +6,7 @@ import { motion } from "motion/react";
 
 export function Header() {
   return (
-    <header className="bg-background/10 fixed top-0 right-0 left-0 flex items-center p-2 backdrop-blur-xs sm:px-0">
+    <header className="bg-background/10 fixed top-0 right-0 left-0 z-50 flex items-center p-2 backdrop-blur-xs sm:px-0">
       <div className="container mx-auto">
         <motion.nav className="flex items-center">
           <Link href="/" className="rounded-full px-2">

@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { queryClient } from "@/components/providers";
 import { cn } from "@/lib/utils";
 import { motion } from "motion/react";
-import { Input } from "./ui/input";
 
 const formSchema = z.object({
   file: z.instanceof(File),
@@ -160,7 +159,7 @@ function UploadFormCard() {
   }
 
   return (
-    <div className="bg-card flex h-[226px] w-full flex-col justify-between gap-4 rounded-4xl px-7 py-5">
+    <div className="bg-card flex h-[226px] w-full min-w-0 flex-col justify-between gap-4 rounded-4xl px-7 py-5">
       <motion.h1
         initial={{ y: -5, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
@@ -184,16 +183,17 @@ function UploadFormCard() {
               const fileName = value?.name ?? "Choose image";
 
               return (
-                <div className="flex flex-col gap-2">
+                <div className="flex min-w-0 flex-col gap-2">
                   <Button
                     asChild
                     className={cn(
-                      "w-full rounded-2xl py-6 font-semibold",
+                      "w-full min-w-0 truncate rounded-2xl py-6 font-semibold",
                       uploadMutation.isPending && "pointer-events-none opacity-50",
                     )}
                   >
                     <label
                       htmlFor="file"
+                      className="truncate"
                       aria-disabled={uploadMutation.isPending}
                     >
                       {isPickerUploading ? (
@@ -204,7 +204,7 @@ function UploadFormCard() {
                     </label>
                   </Button>
 
-                  <Input
+                  <input
                     {...fieldProps}
                     id="file"
                     type="file"
@@ -224,7 +224,7 @@ function UploadFormCard() {
                     }}
                   />
 
-                  <p className="text-muted-foreground text-center text-xs">
+                  <p className="text-muted-foreground text-center text-xs text-balance">
                     PNG, JPG, JPEG, WEBP, HEIC, HEIF. Max size: 15MB
                   </p>
                 </div>
