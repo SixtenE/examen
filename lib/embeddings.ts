@@ -1,5 +1,5 @@
 const EMBEDDING_MODEL = "google/gemini-embedding-2";
-const EMBEDDING_DIMENSIONS = 768;
+const EMBEDDING_DIMENSIONS = 3072;
 
 export async function embedImageUrl(
   imageUrl: string,

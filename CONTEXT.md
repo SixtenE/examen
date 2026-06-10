@@ -27,3 +27,7 @@ _Avoid_: Item id, lot id
 **Auctionet Item**:
 The external catalog entity on Auctionet whose metadata is scraped and whose images become References.
 _Avoid_: Listing, lot, catalog entry
+
+**Vector Artifact**:
+The on-disk JSON holding one Auctionet Item's pre-computed Reference embeddings, produced by the embed script and consumed by seeding. Not the catalog itself; Qdrant is.
+_Avoid_: Vector file, embeddings file

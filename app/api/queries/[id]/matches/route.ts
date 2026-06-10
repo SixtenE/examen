@@ -86,7 +86,7 @@ export async function POST(
 
     const vector = await embedImageUrl(imageUrl);
 
-    const searchResults = await qdrantClient.search("images", {
+    const searchResults = await qdrantClient.search("references", {
       vector,
       limit: MATCH_LIMIT,
       with_payload: true,
