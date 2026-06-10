@@ -7,7 +7,7 @@ import { queries } from "@/db/schema";
 import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { s3Client } from "@/lib/s3";
 
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024; // 2MB
 
 const AUCTION_NOUNS = [
   "Gavel",

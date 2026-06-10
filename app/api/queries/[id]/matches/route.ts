@@ -8,7 +8,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { and, desc, eq, ne } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 
-const MATCH_LIMIT = 6;
+const MATCH_LIMIT = 32;
 
 export async function GET(
   request: NextRequest,
@@ -29,7 +29,13 @@ export async function GET(
       .where(eq(matches.query_id, id))
       .orderBy(desc(matches.similarity_score));
 
-    return Response.json(results);
+    //remove duplicates from results and keep the highest similarity score
+    const uniqueResults = results.filter(
+      (result, index, self) =>
+        index === self.findIndex((t) => t.auctionet_id === result.auctionet_id),
+    );
+
+    return Response.json(uniqueResults);
   } catch {
     return Response.json({ error: "Internal server error" }, { status: 500 });
   }

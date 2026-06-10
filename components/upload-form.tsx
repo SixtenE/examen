@@ -12,6 +12,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { queryClient } from "@/components/providers";
+import { cn } from "@/lib/utils";
 import { motion } from "motion/react";
 import { Input } from "./ui/input";
 
@@ -22,6 +23,11 @@ const formSchema = z.object({
 type UploadImageResult = {
   id: string;
   key: string;
+};
+
+type UploadVariables = {
+  file: File;
+  source: "drop" | "picker";
 };
 
 async function uploadImage(file: File) {
@@ -44,7 +50,7 @@ function useUploadImage() {
   const router = useRouter();
 
   return useMutation({
-    mutationFn: uploadImage,
+    mutationFn: ({ file }: UploadVariables) => uploadImage(file),
     onSuccess: (result) => {
       toast.success("File uploaded successfully");
       queryClient.invalidateQueries({ queryKey: ["queries"] });
@@ -84,7 +90,7 @@ function UploadFormRoot({ children }: { children: ReactNode }) {
     noKeyboard: true,
     onDropAccepted: ([file]) => {
       if (file) {
-        uploadMutation.mutate(file);
+        uploadMutation.mutate({ file, source: "drop" });
       }
     },
     onDropRejected: () => {
@@ -92,11 +98,14 @@ function UploadFormRoot({ children }: { children: ReactNode }) {
     },
   });
 
+  const isDropUploading =
+    uploadMutation.isPending && uploadMutation.variables?.source === "drop";
+
   return (
     <UploadContext.Provider value={{ uploadMutation }}>
       <div {...getRootProps({ className: "min-h-screen" })}>
         <input {...getInputProps()} />
-        {(isDragActive || uploadMutation.isPending) && (
+        {(isDragActive || isDropUploading) && (
           <motion.div
             className="bg-background/80 pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm"
             initial={{ opacity: 0 }}
@@ -104,19 +113,19 @@ function UploadFormRoot({ children }: { children: ReactNode }) {
             exit={{ opacity: 0 }}
           >
             <div className="flex flex-col items-center justify-center gap-4 text-center">
-              {uploadMutation.isPending ? (
+              {isDropUploading ? (
                 <Loader2 className="text-muted-foreground size-10 animate-spin" />
               ) : (
                 <Upload className="text-muted-foreground size-10" />
               )}
               <div>
                 <p className="text-lg font-semibold">
-                  {uploadMutation.isPending
+                  {isDropUploading
                     ? "Uploading image..."
                     : "Drop image to upload"}
                 </p>
                 <p className="text-muted-foreground text-sm">
-                  {uploadMutation.isPending
+                  {isDropUploading
                     ? "Hang tight while we process it."
                     : "Release anywhere on the page."}
                 </p>
@@ -140,11 +149,14 @@ function UploadFormCard() {
   });
 
   const { uploadMutation } = useUploadContext();
+  const isPickerUploading =
+    uploadMutation.isPending && uploadMutation.variables?.source === "picker";
 
   function onSubmit(data: z.infer<typeof formSchema>) {
-    uploadMutation.mutate(data.file, {
-      onSuccess: () => form.reset(),
-    });
+    uploadMutation.mutate(
+      { file: data.file, source: "picker" },
+      { onSuccess: () => form.reset() },
+    );
   }
 
   return (
@@ -175,9 +187,21 @@ function UploadFormCard() {
                 <div className="flex flex-col gap-2">
                   <Button
                     asChild
-                    className="w-full rounded-2xl py-6 font-semibold"
+                    className={cn(
+                      "w-full rounded-2xl py-6 font-semibold",
+                      uploadMutation.isPending && "pointer-events-none opacity-50",
+                    )}
                   >
-                    <label htmlFor="file">{fileName}</label>
+                    <label
+                      htmlFor="file"
+                      aria-disabled={uploadMutation.isPending}
+                    >
+                      {isPickerUploading ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        fileName
+                      )}
+                    </label>
                   </Button>
 
                   <Input
@@ -192,15 +216,16 @@ function UploadFormCard() {
                       field.onChange(file);
 
                       if (file) {
-                        uploadMutation.mutate(file, {
-                          onSuccess: () => form.reset(),
-                        });
+                        uploadMutation.mutate(
+                          { file, source: "picker" },
+                          { onSuccess: () => form.reset() },
+                        );
                       }
                     }}
                   />
 
                   <p className="text-muted-foreground text-center text-xs">
-                    PNG, JPG, JPEG, WEBP Max size: 2MB
+                    PNG, JPG, JPEG, WEBP, HEIC, HEIF. Max size: 2MB
                   </p>
                 </div>
               );

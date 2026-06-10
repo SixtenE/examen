@@ -8,14 +8,14 @@ import { listItem, staggerContainer } from "@/lib/motion";
 import { useParams } from "next/navigation";
 import Image from "next/image";
 import { useEffect } from "react";
+import { queries } from "@/db/schema";
+
+type QueryData = typeof queries.$inferSelect & { image_url: string };
 
 export default function Page() {
   const { id } = useParams<{ id: string }>();
   const { data } = useQuery(
-    queryOptions<{
-      id: string;
-      image_url: string;
-    }>({
+    queryOptions<QueryData>({
       queryKey: ["query", id],
       queryFn: () => fetch(`/api/queries/${id}`).then((res) => res.json()),
     }),
@@ -49,7 +49,7 @@ export default function Page() {
     matchesMutation.mutate();
   }, []);
 
-  if (!matchesData) return null;
+  if (!matchesData || !data) return null;
 
   return (
     <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-20 pb-64">
@@ -61,15 +61,16 @@ export default function Page() {
             transition={{ delay: 0.1 }}
             className="text-lg font-semibold"
           >
-            Image {id}
+            {data.title}
           </motion.h1>
-          {data?.image_url && (
+          {data.image_url && (
             <Image
               src={data.image_url}
               alt="Image"
               width={100}
               height={100}
-              className="asdasdas"
+              className="w-1/2 rounded-lg"
+              loading="eager"
             />
           )}
         </div>
@@ -127,16 +128,17 @@ export default function Page() {
                 <Link
                   href={`https://www.auctionet.com/${match.auctionet_id}`}
                   target="_blank"
-                  className="bg-card flex h-28 w-full gap-4 rounded-4xl py-5 pr-5 pl-7"
+                  className="bg-card flex h-28 w-full gap-4 rounded-4xl"
                 >
                   <Image
                     src="https://images.auctionet.com/uploads/item_1436318_a4690f2d76.jpg"
                     alt="Image"
                     width={100}
                     height={100}
-                    className="aspect-square rounded-xl"
+                    className="aspect-square h-full w-auto rounded-4xl p-2"
+                    loading="eager"
                   />
-                  <div className="flex w-full flex-col gap-2">
+                  <div className="flex w-full flex-col gap-2 p-5">
                     <div className="flex items-center justify-between gap-2">
                       <motion.p
                         initial={{ y: -5, opacity: 0 }}
