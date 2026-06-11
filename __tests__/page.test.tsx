@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import Page from "../app/page";
-import Providers from "../components/providers";
+import Providers, { queryClient } from "../components/providers";
 
 const push = vi.fn();
 
@@ -33,6 +33,7 @@ function mockQueriesFetch() {
 
 afterEach(() => {
   push.mockClear();
+  queryClient.clear();
   vi.restoreAllMocks();
 });
 
@@ -136,6 +137,38 @@ test("shows an error message if the upload fails", async () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+});
+
+test("renders uploaded queries from the API", async () => {
+  const fetchMock = vi.fn().mockImplementation((url: string) => {
+    if (url.startsWith("/api/queries")) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          items: [
+            {
+              id: "550e8400-e29b-41d4-a716-446655440000",
+              title: "Rare Vase",
+              image_key: "abc",
+              status: "ready",
+              createdAt: "2026-06-11T10:00:00.000Z",
+            },
+          ],
+          nextCursor: null,
+        }),
+      });
+    }
+
+    return Promise.resolve({ ok: true, json: async () => ({}) });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  renderPage();
+
+  expect(await screen.findByText("Rare Vase")).toBeTruthy();
+  expect(screen.getByRole("link", { name: /Rare Vase/i }).getAttribute("href")).toBe(
+    "/550e8400-e29b-41d4-a716-446655440000",
+  );
 });
 
 test("shows error when uploading a file that is not an image", async () => {
