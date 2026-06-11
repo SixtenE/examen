@@ -10,7 +10,7 @@ import {
 import { ArrowUpRight, ChevronLeft } from "lucide-react";
 import { motion } from "motion/react";
 import { listItem, staggerContainer } from "@/lib/motion";
-import { notFound, redirect, useParams } from "next/navigation";
+import { notFound, useParams } from "next/navigation";
 import Image from "next/image";
 import { useEffect, useRef } from "react";
 import type { MatchItem, QueryDetail } from "@/lib/types";
@@ -37,7 +37,7 @@ const matchQueryOptions = (id: string) =>
       return res.json();
     },
     refetchInterval: (query) =>
-      query.state.data && query.state.data.length > 0 ? false : 2000,
+      query.state.data && query.state.data.length > 0 ? false : 500,
   });
 
 const queryQueryOptions = (id: string) =>

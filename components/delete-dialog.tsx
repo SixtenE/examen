@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import { queryClient } from "@/components/providers";
 
 export function DeleteDialog({ id }: { id: string }) {
   const router = useRouter();
@@ -30,6 +31,7 @@ export function DeleteDialog({ id }: { id: string }) {
     },
     onSuccess: () => {
       toast.success("Query deleted");
+      queryClient.invalidateQueries({ queryKey: ["queries"] });
       router.push("/");
     },
     onError: () => {
