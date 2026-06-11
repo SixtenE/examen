@@ -82,10 +82,7 @@ export async function POST(
         return Response.json({ error: "Query not found" }, { status: 404 });
       }
 
-      return Response.json(
-        { error: "Matching already in progress" },
-        { status: 409 },
-      );
+      return Response.json({ status: "processing" });
     }
 
     const query = claimed;
