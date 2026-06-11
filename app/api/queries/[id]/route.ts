@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { s3Client } from "@/lib/s3";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { isUuid } from "@/lib/utils";
 
 export async function GET(
   request: NextRequest,
@@ -12,11 +13,15 @@ export async function GET(
 ) {
   const { id } = await params;
 
+  if (!isUuid(id)) {
+    return Response.json({ error: "Query not found" }, { status: 404 });
+  }
+
   try {
     const [query] = await db.select().from(queries).where(eq(queries.id, id));
 
     if (!query) {
-      return Response.json({ error: "Image not found" }, { status: 404 });
+      return Response.json({ error: "Query not found" }, { status: 404 });
     }
 
     const image_url = await getSignedUrl(
@@ -41,6 +46,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+
+  if (!isUuid(id)) {
+    return Response.json({ error: "Query not found" }, { status: 404 });
+  }
 
   try {
     await db.transaction(async (tx) => {

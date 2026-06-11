@@ -2,27 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useRef } from "react";
-import {
-  type InfiniteData,
-  infiniteQueryOptions,
-  useInfiniteQuery,
-  useMutation,
-} from "@tanstack/react-query";
+import { infiniteQueryOptions, useInfiniteQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
-import { toast } from "sonner";
-import { queryClient } from "@/components/providers";
 import { motion } from "motion/react";
 import { listItem, staggerContainer } from "@/lib/motion";
 import { UploadForm } from "@/components/upload-form";
 import { relativeTimeUntilNow } from "@/lib/utils";
-import { queries } from "@/db/schema";
-
-type QueryListItem = typeof queries.$inferSelect;
-
-type QueriesPage = {
-  items: QueryListItem[];
-  nextCursor: string | null;
-};
+import type { QueriesPage } from "@/lib/types";
 
 const PAGE_SIZE = 12;
 const INITIAL_SKELETON_COUNT = 11;
@@ -74,51 +60,6 @@ export default function Page() {
     return () => observer.disconnect();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
-  const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const response = await fetch(`/api/queries/${id}`, {
-        method: "DELETE",
-      });
-      if (!response.ok) {
-        throw new Error("Failed to delete query");
-      }
-      return response.json();
-    },
-    onMutate: async (id) => {
-      await queryClient.cancelQueries({ queryKey: ["queries"] });
-
-      const previousQueries = queryClient.getQueryData<
-        InfiniteData<QueriesPage>
-      >(["queries"]);
-
-      queryClient.setQueryData<InfiniteData<QueriesPage>>(["queries"], (old) =>
-        old
-          ? {
-              ...old,
-              pages: old.pages.map((page) => ({
-                ...page,
-                items: page.items.filter((query) => query.id !== id),
-              })),
-            }
-          : old,
-      );
-
-      return { previousQueries };
-    },
-    onError: (_error, _id, context) => {
-      if (context?.previousQueries) {
-        queryClient.setQueryData(["queries"], context.previousQueries);
-      }
-      toast.error("Failed to delete query");
-    },
-    onSuccess: () => {
-      toast.success("Query deleted");
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["queries"] });
-    },
-  });
-
   return (
     <UploadForm.Root>
       <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-16 pb-64">
@@ -128,14 +69,7 @@ export default function Page() {
           initial="hidden"
           animate="show"
         >
-          <motion.li
-            key="upload"
-            variants={listItem}
-            initial="hidden"
-            animate="show"
-            custom={0}
-            className="row-span-2 min-w-0"
-          >
+          <motion.li key="upload" custom={0} className="row-span-2 min-w-0">
             <UploadForm />
           </motion.li>
           {isLoading

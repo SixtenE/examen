@@ -10,39 +10,45 @@ import {
 import { ArrowUpRight, ChevronLeft } from "lucide-react";
 import { motion } from "motion/react";
 import { listItem, staggerContainer } from "@/lib/motion";
-import { useParams } from "next/navigation";
+import { notFound, redirect, useParams } from "next/navigation";
 import Image from "next/image";
 import { useEffect, useRef } from "react";
-import { matches, queries } from "@/db/schema";
+import type { MatchItem, QueryDetail } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DeleteDialog } from "@/components/delete-dialog";
 
-type QueryData = typeof queries.$inferSelect & { image_url: string };
-
-type MatchData = typeof matches.$inferSelect;
-
 const MATCH_SKELETON_COUNT = 9;
 
+class NotFoundError extends Error {
+  constructor() {
+    super("Not found");
+    this.name = "NotFoundError";
+  }
+}
+
 const matchQueryOptions = (id: string) =>
-  queryOptions<MatchData[]>({
+  queryOptions<MatchItem[]>({
     queryKey: ["matches", id],
-    queryFn: () =>
-      fetch(`/api/queries/${id}/matches`).then((res) => res.json()),
+    queryFn: async () => {
+      const res = await fetch(`/api/queries/${id}/matches`);
+      if (res.status === 404) throw new NotFoundError();
+      if (!res.ok) throw new Error("Failed to fetch matches");
+      return res.json();
+    },
     refetchInterval: (query) =>
       query.state.data && query.state.data.length > 0 ? false : 2000,
   });
 
 const queryQueryOptions = (id: string) =>
-  queryOptions<QueryData>({
+  queryOptions<QueryDetail>({
     queryKey: ["query", id],
-    queryFn: async () =>
-      await fetch(`/api/queries/${id}`).then((res) => res.json()),
-    refetchInterval: (query) =>
-      query.state.data?.status === "ready" ||
-      query.state.data?.status === "failed"
-        ? false
-        : 2000,
+    queryFn: async () => {
+      const res = await fetch(`/api/queries/${id}`);
+      if (res.status === 404) throw new NotFoundError();
+      if (!res.ok) throw new Error("Failed to fetch query");
+      return res.json();
+    },
   });
 
 function MatchItemSkeleton() {
@@ -67,10 +73,10 @@ function MatchItemSkeleton() {
 export default function Page() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
-  const { data } = useQuery(queryQueryOptions(id));
+  const { data, error: queryError } = useQuery(queryQueryOptions(id));
 
   const matchesQuery = matchQueryOptions(id);
-  const { data: matchesData } = useQuery(matchesQuery);
+  const { data: matchesData, error: matchesError } = useQuery(matchesQuery);
 
   const hasStartedMatch = useRef(false);
 
@@ -102,6 +108,8 @@ export default function Page() {
     hasStartedMatch.current = true;
     createMatch();
   }, [data, createMatch]);
+
+  if (matchesError || queryError) notFound();
 
   return (
     <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-16 pb-64">
@@ -137,8 +145,9 @@ export default function Page() {
               alt="Image"
               width={1500}
               height={1500}
+              sizes="(max-width: 640px) 100vw, 33vw"
+              priority
               className="bg-muted aspect-square h-auto w-full rounded-lg object-cover"
-              loading="eager"
             />
           ) : (
             <div className="bg-muted aspect-square h-auto w-full animate-pulse rounded-lg object-cover" />
@@ -179,8 +188,8 @@ export default function Page() {
                       alt="Image"
                       width={500}
                       height={500}
+                      sizes="(max-width: 1024px) 50vw, 25vw"
                       className="pointer-events-none aspect-square h-full w-auto rounded-4xl object-cover p-2"
-                      loading="eager"
                     />
                     <div className="flex w-full flex-col justify-between gap-2 py-5 pr-5 pl-3">
                       <div className="flex justify-between gap-2">

@@ -20,7 +20,8 @@ export function Header() {
                 alt="Logo"
                 width={160}
                 height={60}
-                loading="eager"
+                sizes="160px"
+                priority
                 className="text-brand h-10 w-auto"
               />
             </motion.div>
