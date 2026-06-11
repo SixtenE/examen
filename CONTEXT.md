@@ -9,11 +9,15 @@ A pre-embedded image in the searchable catalog (the dataset). Stored ahead of ti
 _Avoid_: Catalog image, dataset image, Image
 
 **Query**:
-An image a user uploads in order to search the catalog. Embedded on submission and compared against every Reference.
+An image a user uploads in order to search the catalog. Upload stores the bytes and creates the row; the Query is embedded during Match generation.
 _Avoid_: Upload, photo, Image
 
+**Match generation**:
+The embed + vector search + persist step that produces Matches for a Query. Triggered by the upload form; observed on the Query page.
+_Avoid_: Matching, search, indexing
+
 **Match**:
-A stored result linking one Query to one Reference, carrying a similarity score. Searching produces the best Matches.
+A stored result linking one Query to one Reference, carrying a similarity score. Match generation produces the best Matches.
 _Avoid_: Result, hit
 
 **Key**:

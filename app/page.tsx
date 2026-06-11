@@ -121,7 +121,7 @@ export default function Page() {
 
   return (
     <UploadForm.Root>
-      <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-20 pb-64">
+      <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-16 pb-64">
         <motion.ul
           className="grid grid-cols-1 gap-0.5 sm:grid-cols-2 lg:grid-cols-3"
           variants={staggerContainer}

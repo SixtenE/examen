@@ -95,6 +95,10 @@ test("redirects to the query page after successful upload", async () => {
       "/api/upload",
       expect.objectContaining({ method: "POST" }),
     );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/queries/abc/matches",
+      expect.objectContaining({ method: "POST" }),
+    );
     expect(push).toHaveBeenCalledWith("/abc");
   });
 });
@@ -125,6 +129,10 @@ test("shows an error message if the upload fails", async () => {
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/upload",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/queries/abc/matches",
       expect.objectContaining({ method: "POST" }),
     );
   });

@@ -53,6 +53,7 @@ function useUploadImage() {
     onSuccess: (result) => {
       toast.success("File uploaded successfully");
       queryClient.invalidateQueries({ queryKey: ["queries"] });
+      void fetch(`/api/queries/${result.id}/matches`, { method: "POST" });
       router.push(`/${result.id}`);
     },
     onError: () => {
