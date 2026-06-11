@@ -2,13 +2,7 @@
 
 import Link from "next/link";
 import { queryOptions, useMutation, useQuery } from "@tanstack/react-query";
-import {
-  ArrowLeft,
-  ArrowUpRight,
-  Loader2,
-  Settings,
-  Settings2,
-} from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
 import { listItem, staggerContainer } from "@/lib/motion";
 import { useParams } from "next/navigation";
@@ -17,6 +11,7 @@ import { useEffect } from "react";
 import { matches, queries } from "@/db/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DeleteDialog } from "@/components/delete-dialog";
 
 type QueryData = typeof queries.$inferSelect & { image_url: string };
 
@@ -59,7 +54,7 @@ export default function Page() {
     <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-20 pb-64">
       <div className="grid grid-cols-1 gap-0.5 sm:grid-cols-3">
         <div className="bg-card flex h-fit w-full flex-col justify-between gap-4 rounded-4xl p-5">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between gap-2">
             <Button variant="ghost" size="icon" asChild>
               <Link href="/">
                 <ArrowLeft className="size-6 stroke-2" />
@@ -73,9 +68,7 @@ export default function Page() {
             >
               {data.title}
             </motion.h1>
-            <Button variant="ghost" size="icon" className="ml-auto">
-              <Settings className="size-5 stroke-2" />
-            </Button>
+            <DeleteDialog id={data.id} />
           </div>
           {data.image_url && (
             <Image
