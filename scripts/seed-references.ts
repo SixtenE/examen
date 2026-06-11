@@ -13,6 +13,7 @@ type CliOptions = {
   dryRun: boolean;
   recreate: boolean;
   maxItems: number | null;
+  reverse: boolean;
 };
 
 type ReferenceVector = {
@@ -79,6 +80,7 @@ function usage() {
     `  --items <dir>       Auctionet Item JSON directory (default: ${DEFAULT_ITEMS_DIR})`,
     `  --batch-size <n>    Qdrant points per upsert (default: ${DEFAULT_BATCH_SIZE})`,
     "  --max-items <n>     Stop after processing n Vector Artifacts",
+    "  --reverse           Process artifacts in reverse discovery order (newest paths first)",
     "  --force             Re-upload artifacts even if all expected points already exist",
     "  --recreate          Delete and recreate the Qdrant collection before seeding",
     "  --dry-run           Print planned work without calling Qdrant",
@@ -113,6 +115,7 @@ function parseArgs(args: string[]): CliOptions {
   let dryRun = false;
   let recreate = false;
   let maxItems: number | null = null;
+  let reverse = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -145,6 +148,9 @@ function parseArgs(args: string[]): CliOptions {
       case "--recreate":
         recreate = true;
         break;
+      case "--reverse":
+        reverse = true;
+        break;
       case "--help":
       case "-h":
         console.log(usage());
@@ -162,6 +168,7 @@ function parseArgs(args: string[]): CliOptions {
     dryRun,
     recreate,
     maxItems,
+    reverse,
   };
 }
 
@@ -504,8 +511,13 @@ async function seedArtifact(
 async function seedReferences(options: CliOptions, client: QdrantClient | null) {
   const vectorsDir = path.resolve(options.vectorsDir);
   const itemsDir = path.resolve(options.itemsDir);
-  const artifactFiles = await discoverJsonFiles(vectorsDir);
-  const selectedArtifactFiles = options.maxItems === null ? artifactFiles : artifactFiles.slice(0, options.maxItems);
+  let selectedArtifactFiles = await discoverJsonFiles(vectorsDir);
+  if (options.reverse) {
+    selectedArtifactFiles.reverse();
+  }
+  if (options.maxItems !== null) {
+    selectedArtifactFiles = selectedArtifactFiles.slice(0, options.maxItems);
+  }
   const summary: Summary = {
     uploaded: 0,
     skipped: 0,
