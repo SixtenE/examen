@@ -126,14 +126,26 @@ export async function POST(
       })
       .filter((row): row is NonNullable<typeof row> => row !== null);
 
+    const uniqueRows = [
+      ...rows
+        .reduce((map, row) => {
+          const existing = map.get(row.auctionet_id);
+          if (!existing || row.similarity_score > existing.similarity_score) {
+            map.set(row.auctionet_id, row);
+          }
+          return map;
+        }, new Map<string, (typeof rows)[number]>())
+        .values(),
+    ];
+
     const persisted = await db.transaction(async (tx) => {
       await tx.delete(matches).where(eq(matches.query_id, id));
 
-      if (rows.length === 0) {
+      if (uniqueRows.length === 0) {
         return [];
       }
 
-      return tx.insert(matches).values(rows).returning();
+      return tx.insert(matches).values(uniqueRows).returning();
     });
 
     await db.update(queries).set({ status: "ready" }).where(eq(queries.id, id));
