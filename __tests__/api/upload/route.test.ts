@@ -5,6 +5,7 @@ const mockS3Send = vi.hoisted(() => vi.fn().mockResolvedValue({}));
 const mockInsertReturning = vi.hoisted(() =>
   vi.fn().mockResolvedValue([{ id: "550e8400-e29b-41d4-a716-446655440000" }]),
 );
+const mockEnforceRateLimit = vi.hoisted(() => vi.fn().mockResolvedValue(null));
 
 vi.mock("sharp", () => {
   const chain = {
@@ -34,6 +35,10 @@ vi.mock("@/db", () => ({
   },
 }));
 
+vi.mock("@/lib/rate-limit", () => ({
+  enforceRateLimit: (...args: unknown[]) => mockEnforceRateLimit(...args),
+}));
+
 import { POST } from "@/app/api/upload/route";
 
 function makeUploadRequest(file: File | null) {
@@ -50,9 +55,23 @@ function makeUploadRequest(file: File | null) {
 
 afterEach(() => {
   vi.clearAllMocks();
+  mockEnforceRateLimit.mockResolvedValue(null);
 });
 
 describe("POST /api/upload", () => {
+  it("returns 429 when the request is rate limited", async () => {
+    mockEnforceRateLimit.mockResolvedValueOnce(
+      Response.json({ error: "Too many requests" }, { status: 429 }),
+    );
+
+    const response = await POST(makeUploadRequest(null));
+    const body = await response.json();
+
+    expect(response.status).toBe(429);
+    expect(body.error).toBe("Too many requests");
+    expect(mockS3Send).not.toHaveBeenCalled();
+  });
+
   it("uploads a valid image and returns id and key", async () => {
     const file = new File([new Uint8Array([1, 2, 3])], "photo.png", {
       type: "image/png",

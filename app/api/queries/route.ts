@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { queries } from "@/db/schema";
 import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq, lt, or } from "drizzle-orm";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 const DEFAULT_LIMIT = 12;
 const MAX_LIMIT = 50;
@@ -34,6 +35,13 @@ function decodeCursor(value: string): QueryCursor | null {
 }
 
 export async function GET(request: NextRequest) {
+  const rateLimitResponse = await enforceRateLimit(request, {
+    scope: "api:queries:get",
+  });
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   try {
     const { searchParams } = request.nextUrl;
     const limitParam = Number.parseInt(searchParams.get("limit") ?? "", 10);

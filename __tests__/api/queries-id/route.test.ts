@@ -9,6 +9,9 @@ const mockGetSignedUrl = vi.fn().mockResolvedValue("https://signed.example/image
 describe("GET /api/queries/[id]", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.doMock("@/lib/rate-limit", () => ({
+      enforceRateLimit: vi.fn().mockResolvedValue(null),
+    }));
     vi.doMock("@aws-sdk/s3-request-presigner", () => ({
       getSignedUrl: (...args: unknown[]) => mockGetSignedUrl(...args),
     }));
@@ -35,6 +38,7 @@ describe("GET /api/queries/[id]", () => {
     vi.clearAllMocks();
     vi.doUnmock("@/db");
     vi.doUnmock("@/lib/s3");
+    vi.doUnmock("@/lib/rate-limit");
     vi.doUnmock("@aws-sdk/s3-request-presigner");
   });
 
@@ -78,6 +82,9 @@ describe("GET /api/queries/[id]", () => {
 describe("DELETE /api/queries/[id]", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.doMock("@/lib/rate-limit", () => ({
+      enforceRateLimit: vi.fn().mockResolvedValue(null),
+    }));
     vi.doMock("@/lib/s3", () => ({ s3Client: {} }));
     vi.doMock("@/db", () => {
       const mockDb = createDbMock({
@@ -100,6 +107,7 @@ describe("DELETE /api/queries/[id]", () => {
   afterEach(() => {
     vi.doUnmock("@/db");
     vi.doUnmock("@/lib/s3");
+    vi.doUnmock("@/lib/rate-limit");
   });
 
   it("deletes matches and the query in a transaction", async () => {
