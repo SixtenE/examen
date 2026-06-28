@@ -1,7 +1,8 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { DeleteDialog } from "../components/delete-dialog";
-import Providers from "../components/providers";
+import Providers, { queryClient } from "../components/providers";
+import { toast } from "sonner";
 
 const QUERY_ID = "550e8400-e29b-41d4-a716-446655440000";
 const push = vi.fn();
@@ -33,7 +34,8 @@ function renderDialog() {
 }
 
 afterEach(() => {
-  push.mockClear();
+  vi.clearAllMocks();
+  queryClient.clear();
   vi.restoreAllMocks();
 });
 
@@ -54,5 +56,27 @@ test("deletes the query and navigates home on confirm", async () => {
       method: "DELETE",
     });
     expect(push).toHaveBeenCalledWith("/");
+  });
+});
+
+test("shows a rate-limit toast when delete is rate limited", async () => {
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: false,
+    status: 429,
+    headers: new Headers({ "Retry-After": "10" }),
+    json: async () => ({ error: "Too many requests" }),
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  renderDialog();
+
+  fireEvent.click(screen.getByRole("button"));
+  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+
+  await waitFor(() => {
+    expect(toast.error).toHaveBeenCalledWith(
+      "Too many requests. Try again in 10 seconds.",
+    );
+    expect(push).not.toHaveBeenCalled();
   });
 });

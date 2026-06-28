@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import QueryDetailPage from "../app/[id]/page";
 import Providers, { queryClient } from "../components/providers";
+import { toast } from "sonner";
 
 const QUERY_ID = "550e8400-e29b-41d4-a716-446655440000";
 
@@ -58,6 +59,13 @@ vi.mock("next/image", () => ({
   }) => <img src={src} alt={alt} {...props} />,
 }));
 
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 function renderPage() {
   return render(
     <Providers>
@@ -67,7 +75,7 @@ function renderPage() {
 }
 
 afterEach(() => {
-  push.mockClear();
+  vi.clearAllMocks();
   queryClient.clear();
   vi.restoreAllMocks();
 });
@@ -138,6 +146,78 @@ test("starts match generation for pending queries", async () => {
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/queries/${QUERY_ID}/matches`,
       expect.objectContaining({ method: "POST" }),
+    );
+  });
+});
+
+test("shows a rate-limit toast when query detail is rate limited", async () => {
+  const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+    if (url === `/api/queries/${QUERY_ID}`) {
+      return Promise.resolve({
+        ok: false,
+        status: 429,
+        headers: new Headers({ "Retry-After": "15" }),
+        json: async () => ({ error: "Too many requests" }),
+      });
+    }
+
+    if (url === `/api/queries/${QUERY_ID}/matches` && init?.method !== "POST") {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => mockMatches,
+      });
+    }
+
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  renderPage();
+
+  await waitFor(() => {
+    expect(toast.error).toHaveBeenCalledWith(
+      "Too many requests. Try again in 15 seconds.",
+    );
+  });
+});
+
+test("shows a rate-limit toast when match generation is rate limited", async () => {
+  const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+    if (url === `/api/queries/${QUERY_ID}`) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ ...mockQuery, status: "pending" }),
+      });
+    }
+
+    if (url === `/api/queries/${QUERY_ID}/matches` && init?.method === "POST") {
+      return Promise.resolve({
+        ok: false,
+        status: 429,
+        headers: new Headers({ "Retry-After": "20" }),
+        json: async () => ({ error: "Too many requests" }),
+      });
+    }
+
+    if (url === `/api/queries/${QUERY_ID}/matches`) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => [],
+      });
+    }
+
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  renderPage();
+
+  await waitFor(() => {
+    expect(toast.error).toHaveBeenCalledWith(
+      "Too many requests. Try again in 20 seconds.",
     );
   });
 });

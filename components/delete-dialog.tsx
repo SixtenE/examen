@@ -18,6 +18,7 @@ import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { queryClient } from "@/components/providers";
+import { getApiErrorMessage, throwApiError } from "@/lib/api-errors";
 
 export function DeleteDialog({ id }: { id: string }) {
   const router = useRouter();
@@ -27,6 +28,7 @@ export function DeleteDialog({ id }: { id: string }) {
       const response = await fetch(`/api/queries/${id}`, {
         method: "DELETE",
       });
+      await throwApiError(response, "Failed to delete query");
       return response.json();
     },
     onSuccess: () => {
@@ -34,8 +36,8 @@ export function DeleteDialog({ id }: { id: string }) {
       queryClient.invalidateQueries({ queryKey: ["queries"] });
       router.push("/");
     },
-    onError: () => {
-      toast.error("Failed to delete query");
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, "Failed to delete query"));
     },
   });
   return (
