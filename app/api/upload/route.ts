@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { queries } from "@/db/schema";
 import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { s3Client } from "@/lib/s3";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15MB
 const STORED_MAX_EDGE = 1500;
@@ -135,6 +136,13 @@ function isHeic(file: File) {
 }
 
 export async function POST(request: NextRequest) {
+  const rateLimitResponse = await enforceRateLimit(request, {
+    scope: "api:upload:post",
+  });
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   try {
     let formData: FormData;
     try {

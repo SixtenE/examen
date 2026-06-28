@@ -17,6 +17,12 @@ import type { MatchItem, QueryDetail } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DeleteDialog } from "@/components/delete-dialog";
+import {
+  getApiErrorMessage,
+  isRateLimitError,
+  throwApiError,
+} from "@/lib/api-errors";
+import { toast } from "sonner";
 
 const MATCH_SKELETON_COUNT = 9;
 
@@ -33,11 +39,13 @@ const matchQueryOptions = (id: string) =>
     queryFn: async () => {
       const res = await fetch(`/api/queries/${id}/matches`);
       if (res.status === 404) throw new NotFoundError();
-      if (!res.ok) throw new Error("Failed to fetch matches");
+      await throwApiError(res, "Failed to fetch matches");
       return res.json();
     },
     refetchInterval: (query) =>
       query.state.data && query.state.data.length > 0 ? false : 500,
+    retry: (failureCount, error) =>
+      !isRateLimitError(error) && failureCount < 3,
   });
 
 const queryQueryOptions = (id: string) =>
@@ -46,9 +54,11 @@ const queryQueryOptions = (id: string) =>
     queryFn: async () => {
       const res = await fetch(`/api/queries/${id}`);
       if (res.status === 404) throw new NotFoundError();
-      if (!res.ok) throw new Error("Failed to fetch query");
+      await throwApiError(res, "Failed to fetch query");
       return res.json();
     },
+    retry: (failureCount, error) =>
+      !isRateLimitError(error) && failureCount < 3,
   });
 
 function MatchItemSkeleton() {
@@ -83,15 +93,11 @@ export default function Page() {
   const { mutate: createMatch } = useMutation({
     mutationFn: async () => {
       const res = await fetch(`/api/queries/${id}/matches`, { method: "POST" });
-      const body = await res.json();
-      if (!res.ok) {
-        throw new Error(
-          typeof body.error === "string"
-            ? body.error
-            : "Failed to start matching",
-        );
-      }
-      return body;
+      await throwApiError(res, "Failed to start matching");
+      return res.json();
+    },
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, "Failed to start matching"));
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: matchesQuery.queryKey });
@@ -109,7 +115,20 @@ export default function Page() {
     createMatch();
   }, [data, createMatch]);
 
-  if (matchesError || queryError) notFound();
+  useEffect(() => {
+    if (queryError) {
+      toast.error(getApiErrorMessage(queryError, "Failed to fetch query"));
+    }
+  }, [queryError]);
+
+  useEffect(() => {
+    if (matchesError) {
+      toast.error(getApiErrorMessage(matchesError, "Failed to fetch matches"));
+    }
+  }, [matchesError]);
+
+  if (queryError && !isRateLimitError(queryError)) notFound();
+  if (matchesError && !isRateLimitError(matchesError)) notFound();
 
   return (
     <main className="container mx-auto flex flex-col gap-0.5 px-2 pt-16 pb-64">

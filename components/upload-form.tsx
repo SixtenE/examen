@@ -12,6 +12,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { queryClient } from "@/components/providers";
+import { getApiErrorMessage, throwApiError } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 import { motion } from "motion/react";
 
@@ -38,9 +39,7 @@ async function uploadImage(file: File) {
     body: formData,
   });
 
-  if (!response.ok) {
-    throw new Error("Failed to upload file");
-  }
+  await throwApiError(response, "Failed to upload file");
 
   return (await response.json()) as UploadImageResult;
 }
@@ -53,11 +52,17 @@ function useUploadImage() {
     onSuccess: (result) => {
       toast.success("File uploaded successfully");
       queryClient.invalidateQueries({ queryKey: ["queries"] });
-      void fetch(`/api/queries/${result.id}/matches`, { method: "POST" });
+      void fetch(`/api/queries/${result.id}/matches`, { method: "POST" })
+        .then(async (response) => {
+          await throwApiError(response, "Failed to start matching");
+        })
+        .catch((error) => {
+          toast.error(getApiErrorMessage(error, "Failed to start matching"));
+        });
       router.push(`/${result.id}`);
     },
-    onError: () => {
-      toast.error("Failed to upload file");
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, "Failed to upload file"));
     },
   });
 }

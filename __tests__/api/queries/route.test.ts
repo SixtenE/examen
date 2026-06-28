@@ -9,6 +9,9 @@ function makeRequest(url: string) {
 describe("GET /api/queries", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.doMock("@/lib/rate-limit", () => ({
+      enforceRateLimit: vi.fn().mockResolvedValue(null),
+    }));
     vi.doMock("@/db", () => {
       const mockDb = createDbMock({
         selectResults: [
@@ -29,6 +32,7 @@ describe("GET /api/queries", () => {
 
   afterEach(() => {
     vi.doUnmock("@/db");
+    vi.doUnmock("@/lib/rate-limit");
   });
 
   it("returns paginated query items", async () => {

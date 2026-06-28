@@ -7,6 +7,9 @@ const params = Promise.resolve({ id: QUERY_ID });
 describe("GET /api/queries/[id]/matches", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.doMock("@/lib/rate-limit", () => ({
+      enforceRateLimit: vi.fn().mockResolvedValue(null),
+    }));
     vi.doMock("@/lib/s3", () => ({ s3Client: {} }));
     vi.doMock("@/lib/qdrant", () => ({
       qdrantClient: { search: vi.fn() },
@@ -61,6 +64,7 @@ describe("GET /api/queries/[id]/matches", () => {
     vi.doUnmock("@/lib/s3");
     vi.doUnmock("@/lib/qdrant");
     vi.doUnmock("@/lib/embeddings");
+    vi.doUnmock("@/lib/rate-limit");
   });
 
   it("deduplicates matches by auctionet_id", async () => {

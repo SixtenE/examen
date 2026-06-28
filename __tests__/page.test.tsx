@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import Page from "../app/page";
 import Providers, { queryClient } from "../components/providers";
+import { toast } from "sonner";
 
 const push = vi.fn();
 
@@ -14,6 +15,13 @@ vi.mock("next/navigation", () => ({
     forward: vi.fn(),
     refresh: vi.fn(),
   }),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
 }));
 
 function renderPage() {
@@ -32,7 +40,7 @@ function mockQueriesFetch() {
 }
 
 afterEach(() => {
-  push.mockClear();
+  vi.clearAllMocks();
   queryClient.clear();
   vi.restoreAllMocks();
 });
@@ -139,6 +147,38 @@ test("shows an error message if the upload fails", async () => {
   });
 });
 
+test("shows a rate-limit toast when upload is rate limited", async () => {
+  const fetchMock = vi.fn().mockImplementation((url: string) => {
+    if (url === "/api/upload") {
+      return Promise.resolve({
+        ok: false,
+        status: 429,
+        headers: new Headers({ "Retry-After": "12" }),
+        json: async () => ({ error: "Too many requests" }),
+      });
+    }
+
+    if (url.startsWith("/api/queries")) {
+      return mockQueriesFetch();
+    }
+
+    return Promise.resolve({ ok: true, json: async () => ({}) });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  renderPage();
+
+  const file = new File(["hello"], "hello.png", { type: "image/png" });
+  const input = screen.getByLabelText("Choose image") as HTMLInputElement;
+  fireEvent.change(input, { target: { files: [file] } });
+
+  await waitFor(() => {
+    expect(toast.error).toHaveBeenCalledWith(
+      "Too many requests. Try again in 12 seconds.",
+    );
+  });
+});
+
 test("renders uploaded queries from the API", async () => {
   const fetchMock = vi.fn().mockImplementation((url: string) => {
     if (url.startsWith("/api/queries")) {
@@ -169,6 +209,24 @@ test("renders uploaded queries from the API", async () => {
   expect(screen.getByRole("link", { name: /Rare Vase/i }).getAttribute("href")).toBe(
     "/550e8400-e29b-41d4-a716-446655440000",
   );
+});
+
+test("shows a rate-limit toast when the query list is rate limited", async () => {
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: false,
+    status: 429,
+    headers: new Headers({ "Retry-After": "8" }),
+    json: async () => ({ error: "Too many requests" }),
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  renderPage();
+
+  await waitFor(() => {
+    expect(toast.error).toHaveBeenCalledWith(
+      "Too many requests. Try again in 8 seconds.",
+    );
+  });
 });
 
 test("shows error when uploading a file that is not an image", async () => {

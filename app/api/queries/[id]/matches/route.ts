@@ -8,6 +8,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { and, desc, eq, ne } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { isUuid } from "@/lib/utils";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 const MATCH_LIMIT = 32;
 
@@ -30,6 +31,13 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rateLimitResponse = await enforceRateLimit(request, {
+    scope: "api:queries:id:matches:get",
+  });
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   const { id } = await params;
 
   if (!isUuid(id)) {
@@ -65,6 +73,13 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rateLimitResponse = await enforceRateLimit(request, {
+    scope: "api:queries:id:matches:post",
+  });
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   const { id } = await params;
 
   if (!isUuid(id)) {

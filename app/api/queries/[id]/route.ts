@@ -6,11 +6,19 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { s3Client } from "@/lib/s3";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { isUuid } from "@/lib/utils";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rateLimitResponse = await enforceRateLimit(request, {
+    scope: "api:queries:id:get",
+  });
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   const { id } = await params;
 
   if (!isUuid(id)) {
@@ -45,6 +53,13 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rateLimitResponse = await enforceRateLimit(request, {
+    scope: "api:queries:id:delete",
+  });
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   const { id } = await params;
 
   if (!isUuid(id)) {

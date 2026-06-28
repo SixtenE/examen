@@ -7,8 +7,14 @@ import { ArrowRight } from "lucide-react";
 import { motion } from "motion/react";
 import { listItem, staggerContainer } from "@/lib/motion";
 import { UploadForm } from "@/components/upload-form";
+import {
+  getApiErrorMessage,
+  isRateLimitError,
+  throwApiError,
+} from "@/lib/api-errors";
 import { relativeTimeUntilNow } from "@/lib/utils";
 import type { QueriesPage } from "@/lib/types";
+import { toast } from "sonner";
 
 const PAGE_SIZE = 12;
 const INITIAL_SKELETON_COUNT = 11;
@@ -16,12 +22,17 @@ const NEXT_PAGE_SKELETON_COUNT = 3;
 
 const queriesInfiniteOptions = infiniteQueryOptions({
   queryKey: ["queries"],
-  queryFn: ({ pageParam }) =>
-    fetch(
+  queryFn: async ({ pageParam }) => {
+    const response = await fetch(
       `/api/queries?limit=${PAGE_SIZE}${pageParam ? `&cursor=${pageParam}` : ""}`,
-    ).then((res) => res.json() as Promise<QueriesPage>),
+    );
+    await throwApiError(response, "Failed to fetch queries");
+    return (await response.json()) as QueriesPage;
+  },
   initialPageParam: undefined as string | undefined,
   getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+  retry: (failureCount, error) =>
+    !isRateLimitError(error) && failureCount < 3,
 });
 
 function QueryCardSkeleton() {
@@ -38,8 +49,14 @@ function QueryCardSkeleton() {
 export default function Page() {
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage } =
-    useInfiniteQuery(queriesInfiniteOptions);
+  const {
+    data,
+    error,
+    isLoading,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useInfiniteQuery(queriesInfiniteOptions);
 
   const queryList = data?.pages.flatMap((page) => page.items) ?? [];
 
@@ -59,6 +76,12 @@ export default function Page() {
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+
+  useEffect(() => {
+    if (error) {
+      toast.error(getApiErrorMessage(error, "Failed to fetch queries"));
+    }
+  }, [error]);
 
   return (
     <UploadForm.Root>
