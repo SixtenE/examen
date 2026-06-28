@@ -1,5 +1,11 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { DeleteDialog } from "../components/delete-dialog";
 import Providers, { queryClient } from "../components/providers";
 import { toast } from "sonner";
@@ -34,6 +40,7 @@ function renderDialog() {
 }
 
 afterEach(() => {
+  cleanup();
   vi.clearAllMocks();
   queryClient.clear();
   vi.restoreAllMocks();
