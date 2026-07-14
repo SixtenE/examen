@@ -80,6 +80,34 @@ function MatchItemSkeleton() {
   );
 }
 
+function MatchBadge({ score }: { score: number }) {
+  const percentage = Math.round(Math.min(Math.max(score, 0), 1) * 100);
+  const hue = percentage * 1.2;
+  const style = {
+    backgroundColor: `hsl(${hue} 70% 90%)`,
+    color: `hsl(${hue} 70% 25%)`,
+  };
+
+  return (
+    <>
+      <Badge
+        className="hidden tracking-normal xl:block"
+        variant="secondary"
+        style={style}
+      >
+        {percentage}% match
+      </Badge>
+      <Badge
+        className="tracking-normal xl:hidden"
+        variant="secondary"
+        style={style}
+      >
+        {percentage}%
+      </Badge>
+    </>
+  );
+}
+
 export default function Page() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
@@ -229,14 +257,7 @@ export default function Page() {
                         className="line-clamp-1 flex items-center justify-between gap-2 text-2xl font-semibold tracking-tighter"
                       >
                         {match.price} {match.currency}
-                        <Badge
-                          className="hidden tracking-normal xl:block"
-                          variant="secondary"
-                        >{`${Math.round(match.similarity_score * 100)}% match`}</Badge>
-                        <Badge
-                          className="tracking-normal xl:hidden"
-                          variant="secondary"
-                        >{`${Math.round(match.similarity_score * 100)}%`}</Badge>
+                        <MatchBadge score={match.similarity_score} />
                       </motion.p>
                     </div>
                   </Link>
