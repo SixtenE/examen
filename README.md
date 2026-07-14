@@ -1,36 +1,119 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Examen
 
-## Getting Started
+### Visual search for sold auction items
 
-First, run the development server:
+Examen turns an uploaded photo into a ranked list of visually similar items from Auctionet's sold archive. It combines multimodal embeddings with vector search, then returns each match with its realized price and original listing.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Built as a full-stack thesis project—from data collection and embedding pipelines to search, persistence, and deployment.
+
+## Highlights
+
+- Built an end-to-end image retrieval pipeline: scrape, normalize, embed, index, search, and rank.
+- Designed semantic image search with 3072-dimensional Gemini embeddings and cosine similarity in Qdrant.
+- Separated storage by responsibility: vectors in Qdrant, application state in Postgres, and user uploads in S3.
+- Preserved historical match metadata in Postgres so results remain stable if the source catalog changes.
+- Documented consequential design choices as [architecture decision records](./docs/adr/).
+
+## Tech stack
+
+**Frontend:** Next.js 16, React 19, TypeScript, Tailwind CSS, Motion  
+**Backend:** Next.js Route Handlers, Drizzle ORM, PostgreSQL  
+**Search & AI:** Qdrant, Gemini multimodal embeddings via OpenRouter  
+**Infrastructure:** S3-compatible object storage, Railway  
+**Quality:** Vitest, Testing Library, ESLint, Prettier
+
+## How it works
+
+```mermaid
+flowchart LR
+  subgraph Catalog pipeline
+    A[Scrape sold items] --> B[Embed images]
+    B --> C[Index vectors in Qdrant]
+  end
+
+  subgraph Search flow
+    D[Upload photo] --> E[Store in S3]
+    D --> F[Create Query in Postgres]
+    F --> G[Embed photo]
+    G --> H[Vector search]
+    H --> I[Persist and display ranked Matches]
+  end
+
+  C --> H
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Reference images remain on Auctionet's CDN. Only user uploads are stored in S3, avoiding duplicate media storage.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Run locally
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Prerequisites
 
-## Learn More
+- Node.js 20+
+- pnpm
+- PostgreSQL
+- Qdrant
+- S3-compatible object storage
+- OpenRouter API key
 
-To learn more about Next.js, take a look at the following resources:
+### Setup
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+pnpm install
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+# Create .env with the variables below
+pnpm exec drizzle-kit push
+pnpm dev
+```
 
-## Deploy on Vercel
+Open [localhost:3000](http://localhost:3000).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+DATABASE_URL=postgresql://...
+QDRANT_URL=https://...
+OPENROUTER_API_KEY=...
+AWS_REGION=...
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_BUCKET_NAME=...
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Build the searchable catalog
+
+```bash
+# 1. Scrape sold Auctionet items
+pnpm scrape:auctionet -- \
+  --url "https://auctionet.com/en/search/9-ceramics-porcelain?is=ended" \
+  --out data/auctionet/items
+
+# 2. Generate image embeddings
+pnpm embed:auctionet-vectors -- \
+  --items-dir data/auctionet/items \
+  --out-dir data/auctionet/vectors
+
+# 3. Seed Qdrant
+pnpm seed:references -- \
+  --vectors-dir data/auctionet/vectors \
+  --items-dir data/auctionet/items
+```
+
+The pipeline writes resumable JSON artifacts to `data/auctionet/`, making each stage independently inspectable and repeatable.
+
+## Project documentation
+
+- [Domain model](./CONTEXT.md)
+- [Architecture decisions](./docs/adr/)
+- [Qdrant selection](./docs/adr/0002-qdrant-for-vector-storage.md)
+- [Match generation lifecycle](./docs/adr/0003-page-driven-match-generation.md)
+- [Deterministic vector IDs](./docs/adr/0004-deterministic-qdrant-reference-point-ids.md)
+
+## Scripts
+
+```bash
+pnpm dev                        # Start the development server
+pnpm build                      # Create a production build
+pnpm test                       # Run tests
+pnpm lint                       # Run ESLint
+pnpm scrape:auctionet           # Collect sold Auctionet items
+pnpm embed:auctionet-vectors    # Generate catalog embeddings
+pnpm seed:references            # Seed the Qdrant catalog
+```

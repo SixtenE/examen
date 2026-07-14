@@ -2,6 +2,16 @@
 
 Uploading a Query returns immediately after the bytes land in S3 and the row is written. The upload form then fires a fire-and-forget matching `POST` so generation starts before navigation completes. The `/queries/[id]` page is the primary observer: it polls the Query's `status` (`pending | processing | ready | failed`) and Matches every 2s while waiting, and only fires the matching `POST` itself as a fallback when the Query is `pending` or `failed` (direct links, retries). We did this so matching begins as early as possible while the user lands on the result page instantly and watches Matches appear there, rather than staring at a blocked upload form during the (slow) embed + Qdrant search.
 
+## Current implementation
+
+The trigger pattern (upload form fire-and-forget + page fallback POST) is implemented. The detail page currently lives at `/:id`, polls Matches only every 500ms, and does not refetch Query status — so a `ready` Query with zero Matches may poll indefinitely.
+
+## Target behavior
+
+- Route: `/queries/[id]`
+- Poll Query status and Matches every 2 seconds
+- Stop polling when status is `ready` or `failed`, including when `ready` with zero Matches
+
 ## Considered Options
 
 - **Upload-triggered with page fallback and a status column** (chosen) — matching starts on upload; the detail page polls and only re-triggers for edge cases; persisted `status` cleanly distinguishes "still matching" from "genuinely zero matches".
@@ -12,4 +22,4 @@ Uploading a Query returns immediately after the bytes land in S3 and the row is 
 
 ## Consequences
 
-`queries` carries a `query_status` enum. The matching `POST` atomically claims a Query (`status -> processing` only when not already processing) so concurrent callers can't both run the expensive search; a duplicate request while already processing gets `200 { status: "processing" }`. The detail page polls the Query and Matches every 2s until `ready`/`failed` or Matches arrive. On error the row is marked `failed`; revisiting the page re-triggers generation via the fallback POST.
+`queries` carries a `query_status` enum. The matching `POST` atomically claims a Query (`status -> processing` only when not already processing) so concurrent callers can't both run the expensive search; a duplicate request while already processing gets `200 { status: "processing" }`. The detail page polls the Query and Matches every 2s until `ready`/`failed`. On error the row is marked `failed`; revisiting the page re-triggers generation via the fallback POST.

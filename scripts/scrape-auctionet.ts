@@ -8,12 +8,7 @@ import {
   stripHtmlTags,
 } from "../lib/auctionet";
 import { constants } from "node:fs";
-import {
-  access,
-  mkdir,
-  rename,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -80,7 +75,7 @@ type AuctionetItemJson = {
   };
 };
 
-const DEFAULT_OUT_DIR = "data/auctionet/items";
+const DEFAULT_OUT_DIR = "data/auctionet/items/art/paintings";
 const DEFAULT_DELAY_MS = 750;
 const DEFAULT_CONCURRENCY = 2;
 
@@ -464,11 +459,19 @@ function extractDefinitionAttributes(html: string) {
     /<tr\b[^>]*>\s*<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>\s*<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>\s*<\/tr>/gi;
 
   for (const match of html.matchAll(definitionPattern)) {
-    mergeRecordValue(attributes, stripHtmlTags(match[1]), stripHtmlTags(match[2]));
+    mergeRecordValue(
+      attributes,
+      stripHtmlTags(match[1]),
+      stripHtmlTags(match[2]),
+    );
   }
 
   for (const match of html.matchAll(tableRowPattern)) {
-    mergeRecordValue(attributes, stripHtmlTags(match[1]), stripHtmlTags(match[2]));
+    mergeRecordValue(
+      attributes,
+      stripHtmlTags(match[1]),
+      stripHtmlTags(match[2]),
+    );
   }
 
   return attributes;
@@ -645,7 +648,9 @@ function getAuctionetIdFromUrl(url: URL) {
 }
 
 function isAllowedListingPage(nextUrl: URL, startUrl: URL) {
-  return nextUrl.origin === startUrl.origin && nextUrl.pathname === startUrl.pathname;
+  return (
+    nextUrl.origin === startUrl.origin && nextUrl.pathname === startUrl.pathname
+  );
 }
 
 function timestampForFilename(date: Date) {
@@ -776,9 +781,8 @@ async function scrapeItems(
   }
 
   await Promise.all(
-    Array.from(
-      { length: Math.min(options.concurrency, entries.length) },
-      () => worker(),
+    Array.from({ length: Math.min(options.concurrency, entries.length) }, () =>
+      worker(),
     ),
   );
 }
