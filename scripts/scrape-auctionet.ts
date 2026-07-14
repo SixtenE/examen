@@ -75,16 +75,15 @@ type AuctionetItemJson = {
   };
 };
 
-const DEFAULT_OUT_DIR = "data/auctionet/items/art/paintings";
 const DEFAULT_DELAY_MS = 750;
 const DEFAULT_CONCURRENCY = 2;
 
 function usage() {
   return [
-    "Usage: pnpm scrape:auctionet -- --url <auctionet-category-url> [options]",
+    "Usage: pnpm scrape:auctionet -- --url <auctionet-category-url> --out <dir> [options]",
     "",
     "Options:",
-    `  --out <dir>           Directory for per-item JSON files (default: ${DEFAULT_OUT_DIR})`,
+    "  --out <dir>           Directory for per-item JSON files (required)",
     "  --force               Re-fetch and overwrite existing item JSON files",
     `  --delay-ms <ms>       Delay after each item fetch (default: ${DEFAULT_DELAY_MS})`,
     `  --concurrency <n>     Item page fetch concurrency (default: ${DEFAULT_CONCURRENCY})`,
@@ -125,7 +124,7 @@ function readOptionValue(args: string[], index: number, name: string) {
 
 function parseArgs(args: string[]): CliOptions {
   let url: URL | null = null;
-  let outDir = DEFAULT_OUT_DIR;
+  let outDir: string | null = null;
   let force = false;
   let delayMs = DEFAULT_DELAY_MS;
   let concurrency = DEFAULT_CONCURRENCY;
@@ -182,6 +181,10 @@ function parseArgs(args: string[]): CliOptions {
 
   if (!url) {
     throw new Error("Missing required option: --url");
+  }
+
+  if (!outDir) {
+    throw new Error("Missing required option: --out");
   }
 
   return {
