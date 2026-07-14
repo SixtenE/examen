@@ -87,13 +87,13 @@ pnpm scrape:auctionet -- \
 
 # 2. Generate image embeddings
 pnpm embed:auctionet-vectors -- \
-  --items-dir data/auctionet/items \
-  --out-dir data/auctionet/vectors
+  --items data/auctionet/items \
+  --out data/auctionet/vectors
 
 # 3. Seed Qdrant
 pnpm seed:references -- \
-  --vectors-dir data/auctionet/vectors \
-  --items-dir data/auctionet/items
+  --vectors data/auctionet/vectors \
+  --items data/auctionet/items
 ```
 
 The pipeline writes resumable JSON artifacts to `data/auctionet/`, making each stage independently inspectable and repeatable.
