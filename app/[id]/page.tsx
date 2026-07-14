@@ -83,18 +83,28 @@ function MatchItemSkeleton() {
 function MatchBadge({ score }: { score: number }) {
   const percentage = Math.round(Math.min(Math.max(score, 0), 1) * 100);
   const hue = percentage * 1.2;
+  const style = {
+    backgroundColor: `hsl(${hue} 70% 90%)`,
+    color: `hsl(${hue} 70% 25%)`,
+  };
 
   return (
-    <Badge
-      className="tracking-normal"
-      variant="secondary"
-      style={{
-        backgroundColor: `hsl(${hue} 70% 90%)`,
-        color: `hsl(${hue} 70% 25%)`,
-      }}
-    >
-      {percentage}%<span className="hidden xl:inline"> match</span>
-    </Badge>
+    <>
+      <Badge
+        className="hidden tracking-normal xl:block"
+        variant="secondary"
+        style={style}
+      >
+        {percentage}% match
+      </Badge>
+      <Badge
+        className="tracking-normal xl:hidden"
+        variant="secondary"
+        style={style}
+      >
+        {percentage}%
+      </Badge>
+    </>
   );
 }
 
