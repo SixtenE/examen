@@ -12,7 +12,8 @@ import { enforceRateLimit } from "@/lib/rate-limit";
 
 const REFERENCE_COLLECTIONS = [
   "references-28-paintings",
-  "references-9-ceramics-porcelain",
+  //"references-9-ceramics-porcelain",
+  "references",
 ] as const;
 const SEARCH_LIMIT_PER_COLLECTION = 128;
 const MATCH_LIMIT = 32;
