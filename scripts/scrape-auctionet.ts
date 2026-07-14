@@ -682,55 +682,48 @@ async function writeJsonFile(filePath: string, value: unknown) {
   await rename(tmpPath, filePath);
 }
 
-async function discoverItemUrls(options: CliOptions, manifest: RunManifest) {
-  const itemUrls = new Map<number, URL>();
-  const visitedListingUrls = new Set<string>();
-  let listingUrl: URL | null = options.url;
+function formatDuration(ms: number) {
+  const totalSeconds = Math.round(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
 
-  while (listingUrl) {
-    const listingUrlKey = listingUrl.toString();
-
-    if (visitedListingUrls.has(listingUrlKey)) {
-      break;
-    }
-
-    if (options.maxPages && visitedListingUrls.size >= options.maxPages) {
-      break;
-    }
-
-    visitedListingUrls.add(listingUrlKey);
-    console.log(`Fetching listing page ${listingUrlKey}`);
-
-    const html = await fetchAuctionetHtml(listingUrl);
-    const discovered = extractAuctionetItemUrls(html, listingUrl);
-
-    for (const itemUrl of discovered) {
-      const auctionetId = getAuctionetIdFromUrl(itemUrl);
-      itemUrls.set(auctionetId, itemUrl);
-
-      if (options.maxItems && itemUrls.size >= options.maxItems) {
-        break;
-      }
-    }
-
-    const nextUrl = extractNextListingPageUrl(html, listingUrl);
-    const allowedNextUrl =
-      nextUrl && isAllowedListingPage(nextUrl, options.url) ? nextUrl : null;
-
-    manifest.listing_pages.push({
-      url: listingUrlKey,
-      item_count: discovered.length,
-      next_url: allowedNextUrl?.toString() ?? null,
-    });
-
-    if (options.maxItems && itemUrls.size >= options.maxItems) {
-      break;
-    }
-
-    listingUrl = allowedNextUrl;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
   }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
 
-  return itemUrls;
+function createPageProgress(pageNumber: number, totalItems: number) {
+  const pageStartedAt = performance.now();
+  const recentDurations: number[] = [];
+  let done = 0;
+
+  return {
+    record(durationMs: number) {
+      done += 1;
+      recentDurations.push(durationMs);
+      if (recentDurations.length > 50) {
+        recentDurations.shift();
+      }
+    },
+    report() {
+      const elapsedMs = performance.now() - pageStartedAt;
+      const percent =
+        totalItems > 0 ? Math.round((done / totalItems) * 100) : 100;
+      const averageMs =
+        recentDurations.length > 0
+          ? recentDurations.reduce((sum, value) => sum + value, 0) /
+            recentDurations.length
+          : 0;
+      const etaMs = averageMs * (totalItems - done);
+
+      return `Page ${pageNumber}: ${done}/${totalItems} (${percent}%), elapsed ${formatDuration(elapsedMs)}, ETA ${formatDuration(etaMs)}`;
+    },
+  };
 }
 
 async function scrapeItem(
@@ -748,7 +741,6 @@ async function scrapeItem(
   }
 
   try {
-    console.log(`Fetching item ${auctionetId}`);
     const html = await fetchAuctionetHtml(itemUrl);
     const item = extractAuctionetItemJson(html, itemUrl, auctionetId);
     await mkdir(destinationDir, { recursive: true });
@@ -767,27 +759,100 @@ async function scrapeItem(
   }
 }
 
-async function scrapeItems(
-  itemUrls: Map<number, URL>,
+async function scrapePageItems(
+  entries: [number, URL][],
+  pageNumber: number,
   options: CliOptions,
   manifest: RunManifest,
 ) {
-  const entries = Array.from(itemUrls.entries());
+  if (entries.length === 0) {
+    console.log(`Page ${pageNumber}: 0/0 (100%), elapsed 0s, ETA 0s`);
+    return;
+  }
+
+  const progress = createPageProgress(pageNumber, entries.length);
   let nextIndex = 0;
 
   async function worker() {
     while (nextIndex < entries.length) {
       const entry = entries[nextIndex];
       nextIndex += 1;
+      const startedAt = performance.now();
       await scrapeItem(entry[0], entry[1], options, manifest);
+      progress.record(performance.now() - startedAt);
+      console.log(progress.report());
     }
   }
 
   await Promise.all(
-    Array.from({ length: Math.min(options.concurrency, entries.length) }, () =>
-      worker(),
+    Array.from(
+      { length: Math.min(options.concurrency, entries.length) },
+      () => worker(),
     ),
   );
+}
+
+async function crawlAuctionet(options: CliOptions, manifest: RunManifest) {
+  const seenAuctionetIds = new Set<number>();
+  const visitedListingUrls = new Set<string>();
+  let listingUrl: URL | null = options.url;
+  let pageNumber = 0;
+
+  while (listingUrl) {
+    const listingUrlKey = listingUrl.toString();
+
+    if (visitedListingUrls.has(listingUrlKey)) {
+      break;
+    }
+
+    if (options.maxPages && visitedListingUrls.size >= options.maxPages) {
+      break;
+    }
+
+    visitedListingUrls.add(listingUrlKey);
+    pageNumber += 1;
+    console.log(`Fetching listing page ${pageNumber}: ${listingUrlKey}`);
+
+    const html = await fetchAuctionetHtml(listingUrl);
+    const discovered = extractAuctionetItemUrls(html, listingUrl);
+    const pageEntries: [number, URL][] = [];
+    let hitMaxItems = false;
+
+    for (const itemUrl of discovered) {
+      const auctionetId = getAuctionetIdFromUrl(itemUrl);
+
+      if (seenAuctionetIds.has(auctionetId)) {
+        continue;
+      }
+
+      seenAuctionetIds.add(auctionetId);
+      pageEntries.push([auctionetId, itemUrl]);
+      manifest.discovered_item_count = seenAuctionetIds.size;
+
+      if (options.maxItems && seenAuctionetIds.size >= options.maxItems) {
+        hitMaxItems = true;
+        break;
+      }
+    }
+
+    const nextUrl = extractNextListingPageUrl(html, listingUrl);
+    const allowedNextUrl =
+      nextUrl && isAllowedListingPage(nextUrl, options.url) ? nextUrl : null;
+
+    manifest.listing_pages.push({
+      url: listingUrlKey,
+      item_count: discovered.length,
+      next_url: allowedNextUrl?.toString() ?? null,
+    });
+
+    await scrapePageItems(pageEntries, pageNumber, options, manifest);
+
+    if (hitMaxItems) {
+      break;
+    }
+
+    listingUrl = allowedNextUrl;
+  }
 }
 
 async function main() {
@@ -819,10 +884,8 @@ async function main() {
   };
 
   try {
-    const itemUrls = await discoverItemUrls(options, manifest);
-    manifest.discovered_item_count = itemUrls.size;
-    console.log(`Discovered ${itemUrls.size} Auctionet Items`);
-    await scrapeItems(itemUrls, options, manifest);
+    await crawlAuctionet(options, manifest);
+    console.log(`Discovered ${manifest.discovered_item_count} Auctionet Items`);
   } finally {
     manifest.ended_at = new Date().toISOString();
     manifest.failed_item_count = manifest.failures.length;

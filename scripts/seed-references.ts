@@ -8,6 +8,7 @@ type QdrantClient = typeof import("../lib/qdrant").qdrantClient;
 type CliOptions = {
   vectorsDir: string;
   itemsDir: string;
+  collectionName: string;
   batchSize: number;
   force: boolean;
   dryRun: boolean;
@@ -36,6 +37,7 @@ type AuctionetItemJson = {
   auctionet_id: number;
   source_url: string | null;
   title: string | null;
+  status: string | null;
   price: number | null;
   currency: string;
 };
@@ -59,25 +61,24 @@ type ReferencePoint = {
 type Summary = {
   uploaded: number;
   skipped: number;
+  unsold: number;
   failed: number;
   references: number;
 };
 
-const DEFAULT_VECTORS_DIR = "data/auctionet/vectors";
-const DEFAULT_ITEMS_DIR = "data/auctionet/items";
 const DEFAULT_BATCH_SIZE = 100;
-const COLLECTION_NAME = "references";
+const CATEGORY_SEGMENT_PATTERN = /^\d+-[a-z0-9-]+$/;
 const EMBEDDING_MODEL = "google/gemini-embedding-2";
 const EMBEDDING_DIMENSIONS = 3072;
 const MAX_REFERENCES_PER_ITEM = 100;
 
 function usage() {
   return [
-    "Usage: pnpm seed:references -- [options]",
+    "Usage: pnpm seed:references -- --vectors <dir> --items <dir> [options]",
     "",
     "Options:",
-    `  --vectors <dir>     Vector Artifact JSON directory (default: ${DEFAULT_VECTORS_DIR})`,
-    `  --items <dir>       Auctionet Item JSON directory (default: ${DEFAULT_ITEMS_DIR})`,
+    "  --vectors <dir>     Per-category Vector Artifact directory, inside the category folder (required)",
+    "  --items <dir>       Matching per-category Auctionet Item directory (required)",
     `  --batch-size <n>    Qdrant points per upsert (default: ${DEFAULT_BATCH_SIZE})`,
     "  --max-items <n>     Stop after processing n Vector Artifacts",
     "  --reverse           Process artifacts in reverse discovery order (newest paths first)",
@@ -107,9 +108,21 @@ function parsePositiveInteger(value: string, name: string) {
   return parsed;
 }
 
+function deriveCollectionName(vectorsDir: string) {
+  const categorySegment = path.basename(path.dirname(path.resolve(vectorsDir)));
+
+  if (!CATEGORY_SEGMENT_PATTERN.test(categorySegment)) {
+    throw new Error(
+      `--vectors must live inside an Auctionet Category folder like 9-ceramics-porcelain/vectors, got category segment ${categorySegment}`,
+    );
+  }
+
+  return `references-${categorySegment}`;
+}
+
 function parseArgs(args: string[]): CliOptions {
-  let vectorsDir = DEFAULT_VECTORS_DIR;
-  let itemsDir = DEFAULT_ITEMS_DIR;
+  let vectorsDir: string | null = null;
+  let itemsDir: string | null = null;
   let batchSize = DEFAULT_BATCH_SIZE;
   let force = false;
   let dryRun = false;
@@ -160,9 +173,18 @@ function parseArgs(args: string[]): CliOptions {
     }
   }
 
+  if (!vectorsDir) {
+    throw new Error("Missing required option: --vectors");
+  }
+
+  if (!itemsDir) {
+    throw new Error("Missing required option: --items");
+  }
+
   return {
     vectorsDir,
     itemsDir,
+    collectionName: deriveCollectionName(vectorsDir),
     batchSize,
     force,
     dryRun,
@@ -276,12 +298,14 @@ function parsePrice(value: unknown, filePath: string) {
 
   const match = /^([\d\s,.]+)\s+([A-Z]{3})$/.exec(value);
   if (!match) {
-    throw new Error(`${filePath} price has unsupported format: ${value}`);
+    console.warn(`${filePath} price has unsupported format: ${value}`);
+    return null;
   }
 
   const amount = Number(match[1].replace(/\s/g, "").replace(",", "."));
   if (!Number.isFinite(amount)) {
-    throw new Error(`${filePath} price is not numeric: ${value}`);
+    console.warn(`${filePath} price is not numeric: ${value}`);
+    return null;
   }
 
   return amount;
@@ -302,6 +326,7 @@ function validateAuctionetItem(value: unknown, filePath: string): AuctionetItemJ
     auctionet_id: value.auctionet_id,
     source_url: typeof value.source_url === "string" ? value.source_url : null,
     title: typeof value.title === "string" ? value.title : null,
+    status: typeof value.status === "string" ? value.status : null,
     price: parsePrice(value.price, filePath),
     currency,
   };
@@ -416,21 +441,25 @@ function getAnonymousVectorParams(collectionInfo: unknown) {
   return { size, distance };
 }
 
-async function validateCollectionConfig(client: QdrantClient) {
-  const vectorParams = getAnonymousVectorParams(await client.getCollection(COLLECTION_NAME));
+async function validateCollectionConfig(client: QdrantClient, collectionName: string) {
+  const vectorParams = getAnonymousVectorParams(await client.getCollection(collectionName));
 
   if (!vectorParams) {
-    throw new Error(`${COLLECTION_NAME} collection must use an anonymous dense vector`);
+    throw new Error(`${collectionName} collection must use an anonymous dense vector`);
   }
 
   if (vectorParams.size !== EMBEDDING_DIMENSIONS || vectorParams.distance.toLowerCase() !== "cosine") {
     throw new Error(
-      `${COLLECTION_NAME} collection has ${vectorParams.size}/${vectorParams.distance}, expected ${EMBEDDING_DIMENSIONS}/Cosine. Re-run with --recreate to rebuild it.`,
+      `${collectionName} collection has ${vectorParams.size}/${vectorParams.distance}, expected ${EMBEDDING_DIMENSIONS}/Cosine. Re-run with --recreate to rebuild it.`,
     );
   }
 }
 
-async function ensureCollection(client: QdrantClient, options: Pick<CliOptions, "recreate">) {
+async function ensureCollection(
+  client: QdrantClient,
+  collectionName: string,
+  options: Pick<CliOptions, "recreate">,
+) {
   const collectionConfig = {
     vectors: {
       size: EMBEDDING_DIMENSIONS,
@@ -439,30 +468,30 @@ async function ensureCollection(client: QdrantClient, options: Pick<CliOptions, 
   } as const;
 
   if (options.recreate) {
-    await client.recreateCollection(COLLECTION_NAME, collectionConfig);
-    await validateCollectionConfig(client);
-    console.log(`recreated collection: ${COLLECTION_NAME}`);
+    await client.recreateCollection(collectionName, collectionConfig);
+    await validateCollectionConfig(client, collectionName);
+    console.log(`recreated collection: ${collectionName}`);
     return;
   }
 
-  const { exists } = await client.collectionExists(COLLECTION_NAME);
+  const { exists } = await client.collectionExists(collectionName);
   if (exists) {
-    await validateCollectionConfig(client);
-    console.log(`collection exists: ${COLLECTION_NAME}`);
+    await validateCollectionConfig(client, collectionName);
+    console.log(`collection exists: ${collectionName}`);
     return;
   }
 
-  await client.createCollection(COLLECTION_NAME, collectionConfig);
-  await validateCollectionConfig(client);
-  console.log(`created collection: ${COLLECTION_NAME}`);
+  await client.createCollection(collectionName, collectionConfig);
+  await validateCollectionConfig(client, collectionName);
+  console.log(`created collection: ${collectionName}`);
 }
 
-async function artifactAlreadySeeded(client: QdrantClient, pointIds: number[]) {
+async function artifactAlreadySeeded(client: QdrantClient, collectionName: string, pointIds: number[]) {
   if (pointIds.length === 0) {
     return true;
   }
 
-  const records = await client.retrieve(COLLECTION_NAME, {
+  const records = await client.retrieve(collectionName, {
     ids: pointIds,
     with_payload: false,
     with_vector: false,
@@ -477,35 +506,44 @@ async function seedArtifact(
   itemsDir: string,
   options: CliOptions,
   client: QdrantClient | null,
-): Promise<{ referenceCount: number; skipped: boolean }> {
+): Promise<{ referenceCount: number; skipped: boolean; unsold: boolean }> {
   const relativeArtifactPath = path.relative(process.cwd(), artifactPath);
   const artifact = await readVectorArtifact(artifactPath);
   const item = await readAuctionetItem(getItemPath(artifactPath, vectorsDir, itemsDir));
+
+  if (item.status !== "sold") {
+    console.log(`skip unsold: ${relativeArtifactPath} (status: ${item.status ?? "missing"})`);
+    return { referenceCount: 0, skipped: false, unsold: true };
+  }
+
   const points = buildPoints(artifact, item);
 
   if (options.dryRun) {
     console.log(`seed: ${relativeArtifactPath} (${points.length} references)`);
-    return { referenceCount: points.length, skipped: false };
+    return { referenceCount: points.length, skipped: false, unsold: false };
   }
 
   if (!client) {
     throw new Error("Qdrant client is required outside dry-run mode");
   }
 
-  if (!options.force && (await artifactAlreadySeeded(client, points.map((point) => point.id)))) {
+  if (
+    !options.force &&
+    (await artifactAlreadySeeded(client, options.collectionName, points.map((point) => point.id)))
+  ) {
     console.log(`skip existing: ${relativeArtifactPath}`);
-    return { referenceCount: 0, skipped: true };
+    return { referenceCount: 0, skipped: true, unsold: false };
   }
 
   for (const pointBatch of chunk(points, options.batchSize)) {
-    await client.upsert(COLLECTION_NAME, {
+    await client.upsert(options.collectionName, {
       wait: true,
       points: pointBatch,
     });
   }
 
   console.log(`seeded: ${relativeArtifactPath} (${points.length} references)`);
-  return { referenceCount: points.length, skipped: false };
+  return { referenceCount: points.length, skipped: false, unsold: false };
 }
 
 async function seedReferences(options: CliOptions, client: QdrantClient | null) {
@@ -521,6 +559,7 @@ async function seedReferences(options: CliOptions, client: QdrantClient | null) 
   const summary: Summary = {
     uploaded: 0,
     skipped: 0,
+    unsold: 0,
     failed: 0,
     references: 0,
   };
@@ -528,11 +567,11 @@ async function seedReferences(options: CliOptions, client: QdrantClient | null) 
   if (options.dryRun) {
     console.log(
       options.recreate
-        ? `would recreate collection: ${COLLECTION_NAME}`
-        : `would ensure collection: ${COLLECTION_NAME}`,
+        ? `would recreate collection: ${options.collectionName}`
+        : `would ensure collection: ${options.collectionName}`,
     );
   } else if (client) {
-    await ensureCollection(client, options);
+    await ensureCollection(client, options.collectionName, options);
   }
 
   const tracker = createProgressTracker(selectedArtifactFiles.length);
@@ -543,7 +582,9 @@ async function seedReferences(options: CliOptions, client: QdrantClient | null) 
 
     try {
       const result = await seedArtifact(artifactPath, vectorsDir, itemsDir, options, client);
-      if (result.skipped) {
+      if (result.unsold) {
+        summary.unsold += 1;
+      } else if (result.skipped) {
         summary.skipped += 1;
       } else {
         summary.uploaded += 1;
@@ -575,7 +616,7 @@ async function main() {
   const summary = await seedReferences(options, client);
 
   console.log(
-    `Summary: uploaded ${summary.uploaded}, skipped ${summary.skipped}, failed ${summary.failed}, references ${summary.references}`,
+    `Summary: uploaded ${summary.uploaded}, skipped ${summary.skipped}, unsold ${summary.unsold}, failed ${summary.failed}, references ${summary.references}`,
   );
 
   if (summary.failed > 0) {

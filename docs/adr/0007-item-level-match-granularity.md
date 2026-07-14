@@ -8,7 +8,7 @@ Match generation produces at most one Match per Auctionet Item. When an item has
 
 ## Current implementation
 
-Item-level deduplication and generation-time metadata snapshots are implemented. Missing prices are stored as `0` instead of null. The scraper and seed pipeline do not yet filter to sold items only.
+Item-level deduplication and generation-time metadata snapshots are implemented. Missing prices are stored as `0` instead of null in Match rows. The embed and seed scripts skip non-sold items; the seed script seeds sold items with a null Realized Price when price extraction fails. The scraper does not yet filter to sold items only.
 
 ## Target behavior
 

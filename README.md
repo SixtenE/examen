@@ -80,20 +80,20 @@ AWS_BUCKET_NAME=...
 ## Build the searchable catalog
 
 ```bash
-# 1. Scrape sold Auctionet items
+# 1. Scrape sold Auctionet items (per category)
 pnpm scrape:auctionet -- \
   --url "https://auctionet.com/en/search/9-ceramics-porcelain?is=ended" \
-  --out data/auctionet/items
+  --out data/auctionet/items/9-ceramics-porcelain
 
-# 2. Generate image embeddings
+# 2. Generate image embeddings (vectors live inside the category folder)
 pnpm embed:auctionet-vectors -- \
-  --items data/auctionet/items \
-  --out data/auctionet/vectors
+  --items data/auctionet/items/9-ceramics-porcelain \
+  --out data/auctionet/items/9-ceramics-porcelain/vectors
 
-# 3. Seed Qdrant
+# 3. Seed Qdrant (collection name derived from the category folder)
 pnpm seed:references -- \
-  --vectors data/auctionet/vectors \
-  --items data/auctionet/items
+  --vectors data/auctionet/items/9-ceramics-porcelain/vectors \
+  --items data/auctionet/items/9-ceramics-porcelain
 ```
 
 The pipeline writes resumable JSON artifacts to `data/auctionet/`, making each stage independently inspectable and repeatable.

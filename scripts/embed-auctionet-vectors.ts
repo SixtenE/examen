@@ -20,6 +20,7 @@ type AuctionetItemJson = {
   auctionet_id: number;
   source_url?: string | null;
   title?: string | null;
+  status: string | null;
   image_urls: string[];
 };
 
@@ -42,12 +43,12 @@ type VectorArtifact = {
 type Summary = {
   embedded: number;
   skipped: number;
+  unsold: number;
   failed: number;
   images: number;
 };
 
-const DEFAULT_ITEMS_DIR = "data/auctionet/items";
-const DEFAULT_OUT_DIR = "data/auctionet/vectors";
+const CATEGORY_SEGMENT_PATTERN = /^\d+-[a-z0-9-]+$/;
 const DEFAULT_BATCH_SIZE = 5;
 const DEFAULT_DELAY_MS = 1000;
 const DEFAULT_MAX_RETRIES = 5;
@@ -57,11 +58,11 @@ const OPENROUTER_EMBEDDINGS_URL = "https://openrouter.ai/api/v1/embeddings";
 
 function usage() {
   return [
-    "Usage: pnpm embed:auctionet-vectors -- [options]",
+    "Usage: pnpm embed:auctionet-vectors -- --items <dir> --out <dir> [options]",
     "",
     "Options:",
-    `  --items <dir>          Auctionet Item JSON directory (default: ${DEFAULT_ITEMS_DIR})`,
-    `  --out <dir>            Vector output directory (default: ${DEFAULT_OUT_DIR})`,
+    "  --items <dir>          Per-category Auctionet Item directory (required)",
+    "  --out <dir>            Matching per-category Vector Artifact directory (required)",
     `  --batch-size <n>       Image URLs per OpenRouter request (default: ${DEFAULT_BATCH_SIZE})`,
     `  --delay-ms <ms>        Delay between OpenRouter requests (default: ${DEFAULT_DELAY_MS})`,
     `  --max-retries <n>      Retries for 429/5xx responses (default: ${DEFAULT_MAX_RETRIES})`,
@@ -101,9 +102,21 @@ function parseNonNegativeInteger(value: string, name: string) {
   return parsed;
 }
 
+function categorySegment(dir: string, flag: string) {
+  const segment = path.basename(path.resolve(dir));
+
+  if (!CATEGORY_SEGMENT_PATTERN.test(segment)) {
+    throw new Error(
+      `${flag} must end with an Auctionet Category segment like 9-ceramics-porcelain, got ${segment}`,
+    );
+  }
+
+  return segment;
+}
+
 function parseArgs(args: string[]): CliOptions {
-  let itemsDir = DEFAULT_ITEMS_DIR;
-  let outDir = DEFAULT_OUT_DIR;
+  let itemsDir: string | null = null;
+  let outDir: string | null = null;
   let batchSize = DEFAULT_BATCH_SIZE;
   let delayMs = DEFAULT_DELAY_MS;
   let maxRetries = DEFAULT_MAX_RETRIES;
@@ -156,6 +169,23 @@ function parseArgs(args: string[]): CliOptions {
     }
   }
 
+  if (!itemsDir) {
+    throw new Error("Missing required option: --items");
+  }
+
+  if (!outDir) {
+    throw new Error("Missing required option: --out");
+  }
+
+  const itemsCategory = categorySegment(itemsDir, "--items");
+  const outCategory = categorySegment(path.dirname(path.resolve(outDir)), "--out");
+
+  if (itemsCategory !== outCategory) {
+    throw new Error(
+      `--items (${itemsCategory}) and --out (${outCategory}) must be the same Auctionet Category`,
+    );
+  }
+
   return {
     itemsDir,
     outDir,
@@ -189,6 +219,7 @@ function validateAuctionetItem(value: unknown, filePath: string): AuctionetItemJ
     auctionet_id: value.auctionet_id,
     source_url: typeof value.source_url === "string" ? value.source_url : null,
     title: typeof value.title === "string" ? value.title : null,
+    status: typeof value.status === "string" ? value.status : null,
     image_urls: value.image_urls,
   };
 }
@@ -202,7 +233,7 @@ async function fileExists(filePath: string) {
   }
 }
 
-async function discoverItemFiles(itemsDir: string): Promise<string[]> {
+async function discoverItemFiles(itemsDir: string, skipDir: string): Promise<string[]> {
   const entries = await readdir(itemsDir, { withFileTypes: true });
   const files: string[] = [];
 
@@ -210,7 +241,11 @@ async function discoverItemFiles(itemsDir: string): Promise<string[]> {
     const entryPath = path.join(itemsDir, entry.name);
 
     if (entry.isDirectory()) {
-      files.push(...(await discoverItemFiles(entryPath)));
+      if (path.resolve(entryPath) === skipDir) {
+        continue;
+      }
+
+      files.push(...(await discoverItemFiles(entryPath, skipDir)));
       continue;
     }
 
@@ -396,19 +431,24 @@ async function embedItem(
   itemPath: string,
   outputPath: string,
   options: CliOptions,
-): Promise<{ imageCount: number; skipped: boolean }> {
+): Promise<{ imageCount: number; skipped: boolean; unsold: boolean }> {
+  const relativeItemPath = path.relative(process.cwd(), itemPath);
   const relativeOutputPath = path.relative(process.cwd(), outputPath);
+  const item = await readAuctionetItem(itemPath);
+
+  if (item.status !== "sold") {
+    console.log(`skip unsold: ${relativeItemPath} (status: ${item.status ?? "missing"})`);
+    return { imageCount: 0, skipped: false, unsold: true };
+  }
 
   if (!options.force && (await fileExists(outputPath))) {
     console.log(`skip existing: ${relativeOutputPath}`);
-    return { imageCount: 0, skipped: true };
+    return { imageCount: 0, skipped: true, unsold: false };
   }
 
-  const item = await readAuctionetItem(itemPath);
-
   if (options.dryRun) {
-    console.log(`embed: ${path.relative(process.cwd(), itemPath)} -> ${relativeOutputPath} (${item.image_urls.length} images)`);
-    return { imageCount: item.image_urls.length, skipped: false };
+    console.log(`embed: ${relativeItemPath} -> ${relativeOutputPath} (${item.image_urls.length} images)`);
+    return { imageCount: item.image_urls.length, skipped: false, unsold: false };
   }
 
   const references: ReferenceVector[] = [];
@@ -447,7 +487,7 @@ async function embedItem(
   await writeJsonAtomically(outputPath, artifact);
   console.log(`wrote: ${relativeOutputPath} (${references.length} images)`);
 
-  return { imageCount: references.length, skipped: false };
+  return { imageCount: references.length, skipped: false, unsold: false };
 }
 
 async function embedAuctionetVectors(options: CliOptions) {
@@ -457,11 +497,12 @@ async function embedAuctionetVectors(options: CliOptions) {
 
   const itemsDir = path.resolve(options.itemsDir);
   const outDir = path.resolve(options.outDir);
-  const itemFiles = await discoverItemFiles(itemsDir);
+  const itemFiles = await discoverItemFiles(itemsDir, outDir);
   const selectedItemFiles = options.maxItems === null ? itemFiles : itemFiles.slice(0, options.maxItems);
   const summary: Summary = {
     embedded: 0,
     skipped: 0,
+    unsold: 0,
     failed: 0,
     images: 0,
   };
@@ -471,7 +512,9 @@ async function embedAuctionetVectors(options: CliOptions) {
 
     try {
       const result = await embedItem(itemPath, outputPath, options);
-      if (result.skipped) {
+      if (result.unsold) {
+        summary.unsold += 1;
+      } else if (result.skipped) {
         summary.skipped += 1;
       } else {
         summary.embedded += 1;
@@ -495,7 +538,7 @@ async function main() {
   const summary = await embedAuctionetVectors(options);
 
   console.log(
-    `Summary: embedded ${summary.embedded}, skipped ${summary.skipped}, failed ${summary.failed}, images ${summary.images}`,
+    `Summary: embedded ${summary.embedded}, skipped ${summary.skipped}, unsold ${summary.unsold}, failed ${summary.failed}, images ${summary.images}`,
   );
 
   if (summary.failed > 0) {
