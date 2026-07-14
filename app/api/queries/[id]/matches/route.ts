@@ -10,6 +10,11 @@ import type { NextRequest } from "next/server";
 import { isUuid } from "@/lib/utils";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
+const REFERENCE_COLLECTIONS = [
+  "references-28-paintings",
+  "references-9-ceramics-porcelain",
+] as const;
+const SEARCH_LIMIT_PER_COLLECTION = 128;
 const MATCH_LIMIT = 32;
 
 type ReferencePayload = {
@@ -122,11 +127,17 @@ export async function POST(
 
     const vector = await embedImageUrl(imageUrl);
 
-    const searchResults = (await qdrantClient.search("references", {
-      vector,
-      limit: MATCH_LIMIT,
-      with_payload: true,
-    })) as ReferenceSearchHit[];
+    const searchResults = (
+      await Promise.all(
+        REFERENCE_COLLECTIONS.map((collection) =>
+          qdrantClient.search(collection, {
+            vector,
+            limit: SEARCH_LIMIT_PER_COLLECTION,
+            with_payload: true,
+          }),
+        ),
+      )
+    ).flat() as ReferenceSearchHit[];
 
     const rows = searchResults
       .map((result) => {
@@ -157,7 +168,9 @@ export async function POST(
           return map;
         }, new Map<string, (typeof rows)[number]>())
         .values(),
-    ];
+    ]
+      .sort((a, b) => b.similarity_score - a.similarity_score)
+      .slice(0, MATCH_LIMIT);
 
     const persisted = await db.transaction(async (tx) => {
       await tx.delete(matches).where(eq(matches.query_id, id));

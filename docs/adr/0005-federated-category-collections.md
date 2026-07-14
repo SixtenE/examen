@@ -1,10 +1,10 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Federated category collections in Qdrant
 
-Each Auctionet Category is seeded into its own Qdrant collection named `references-{auctionet-category-id}-{slug}` (for example `references-9-ceramics-porcelain`). Match generation searches every collection on an explicit configured allow-list, fetches 128 candidate points from each, merges by similarity score, deduplicates by Auctionet Item (keeping the highest-scoring Reference image per item), and returns the global top 32 Matches. All collections must share the same embedding model, dimensions, and distance metric; any collection that fails to search fails the entire generation so rankings stay complete and reproducible.
+Each Auctionet Category is seeded into its own Qdrant collection named `references-{auctionet-category-id}-{slug}` (for example `references-9-ceramics-porcelain`). Match generation searches every collection on a fixed allow-list, fetches 128 candidate points from each, merges by similarity score, deduplicates by Auctionet Item (keeping the highest-scoring Reference image per item), and returns the global top 32 Matches. All collections must share the same embedding model, dimensions, and distance metric; any collection that fails to search fails the entire generation so rankings stay complete and reproducible.
 
 ## Considered Options
 
@@ -15,4 +15,4 @@ Each Auctionet Category is seeded into its own Qdrant collection named `referenc
 
 ## Consequences
 
-The legacy `references` collection (currently ceramics/porcelain) must be renamed to an explicit category name. The per-category vectors directory lives inside its category folder (for example `data/auctionet/items/9-ceramics-porcelain/vectors`), and the seed script derives the collection name from that enclosing category folder (for example `--vectors data/auctionet/items/9-ceramics-porcelain/vectors` seeds `references-9-ceramics-porcelain`). Match generation reads the allow-list from configuration rather than hard-coding one collection name. Over-fetching 128 candidates per collection before deduplication is required so the global top 32 still has enough item-level results after collapsing multiple images from the same Auctionet Item.
+The legacy `references` collection (currently ceramics/porcelain) must be renamed to an explicit category name. The per-category vectors directory lives inside its category folder (for example `data/auctionet/items/9-ceramics-porcelain/vectors`), and the seed script derives the collection name from that enclosing category folder (for example `--vectors data/auctionet/items/9-ceramics-porcelain/vectors` seeds `references-9-ceramics-porcelain`). Match generation searches a hard-coded allow-list of `references-28-paintings` and `references-9-ceramics-porcelain`. Over-fetching 128 candidates per collection before deduplication is required so the global top 32 still has enough item-level results after collapsing multiple images from the same Auctionet Item.
