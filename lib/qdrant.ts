@@ -8,4 +8,5 @@ export const qdrantClient = new QdrantClient({
   url: process.env.QDRANT_URL,
   port: null,
   checkCompatibility: false,
+  apiKey: process.env.QDRANT_API_KEY!,
 });
