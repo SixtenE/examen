@@ -1,11 +1,12 @@
 import { db } from "@/db";
 import { matches, queries } from "@/db/schema";
 import { embedImageUrl } from "@/lib/embeddings";
+import { compareMatchesByRank } from "@/lib/rank-matches";
 import { qdrantClient } from "@/lib/qdrant";
 import { s3Client } from "@/lib/s3";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { isUuid } from "@/lib/utils";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -26,12 +27,22 @@ type ReferencePayload = {
   price: number;
   currency: string;
   source_url: string;
+  sold_at?: string | null;
 };
 
 type ReferenceSearchHit = {
   score: number;
   payload?: ReferencePayload | null;
 };
+
+function parseSoldAt(value: unknown): Date | null {
+  if (typeof value !== "string" || value.length === 0) {
+    return null;
+  }
+
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms) : null;
+}
 
 export async function GET(
   request: NextRequest,
@@ -60,14 +71,19 @@ export async function GET(
     const results = await db
       .select()
       .from(matches)
-      .where(eq(matches.query_id, id))
-      .orderBy(desc(matches.similarity_score));
+      .where(eq(matches.query_id, id));
 
-    //remove duplicates from results and keep the highest similarity score
-    const uniqueResults = results.filter(
-      (result, index, self) =>
-        index === self.findIndex((t) => t.auctionet_id === result.auctionet_id),
-    );
+    const uniqueResults = [
+      ...results
+        .reduce((map, row) => {
+          const existing = map.get(row.auctionet_id);
+          if (!existing || row.similarity_score > existing.similarity_score) {
+            map.set(row.auctionet_id, row);
+          }
+          return map;
+        }, new Map<string, (typeof results)[number]>())
+        .values(),
+    ].sort(compareMatchesByRank);
 
     return Response.json(uniqueResults);
   } catch {
@@ -155,6 +171,7 @@ export async function POST(
           title: result.payload?.title ?? "",
           price: result.payload?.price ?? 0,
           currency: result.payload?.currency ?? "",
+          sold_at: parseSoldAt(result.payload?.sold_at),
         };
       })
       .filter((row): row is NonNullable<typeof row> => row !== null);
@@ -170,7 +187,7 @@ export async function POST(
         }, new Map<string, (typeof rows)[number]>())
         .values(),
     ]
-      .sort((a, b) => b.similarity_score - a.similarity_score)
+      .sort(compareMatchesByRank)
       .slice(0, MATCH_LIMIT);
 
     const persisted = await db.transaction(async (tx) => {

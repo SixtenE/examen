@@ -33,5 +33,6 @@ export const matches = pgTable("matches", {
   price: real("price").notNull(),
   currency: varchar("currency").notNull(),
   similarity_score: real("similarity_score").notNull(),
+  sold_at: timestamp("sold_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

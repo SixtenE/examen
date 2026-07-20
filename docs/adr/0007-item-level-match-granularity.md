@@ -4,7 +4,7 @@ status: proposed
 
 # Item-level Match granularity with generation-time snapshots
 
-Match generation produces at most one Match per Auctionet Item. When an item has multiple Reference images, only the highest-scoring image is kept. Each Match stores a snapshot of the item's metadata at generation time — title, image URL, Realized Price, currency, Auctionet ID, and similarity score — so revisiting a past Query shows the same results even if the catalog is later re-scraped or re-seeded. Realized Price is nullable when extraction fails; zero must never represent "unknown". The Catalog includes only sold Auctionet Items; sold items with unparseable prices remain searchable with a missing Realized Price.
+Match generation produces at most one Match per Auctionet Item. When an item has multiple Reference images, only the highest-scoring image is kept. Each Match stores a snapshot of the item's metadata at generation time — title, image URL, Realized Price, currency, Auctionet ID, Sale Date, and similarity score — so revisiting a past Query shows the same results even if the catalog is later re-scraped or re-seeded. Realized Price is nullable when extraction fails; zero must never represent "unknown". The Catalog includes only sold Auctionet Items; sold items with unparseable prices remain searchable with a missing Realized Price.
 
 ## Current implementation
 

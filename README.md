@@ -10,6 +10,7 @@ Built as a full-stack thesis project—from data collection and embedding pipeli
 
 - Built an end-to-end image retrieval pipeline: scrape, normalize, embed, index, search, and rank.
 - Designed semantic image search with 3072-dimensional Gemini embeddings and cosine similarity in Qdrant.
+- Ranked Matches by visual similarity tempered with sale-date recency so recent comps surface higher while `% match` stays a pure likeness score.
 - Separated storage by responsibility: vectors in Qdrant, application state in Postgres, and user uploads in S3.
 - Preserved historical match metadata in Postgres so results remain stable if the source catalog changes.
 - Documented consequential design choices as [architecture decision records](./docs/adr/).

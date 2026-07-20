@@ -40,6 +40,7 @@ type AuctionetItemJson = {
   status: string | null;
   price: number | null;
   currency: string;
+  sold_at: string | null;
 };
 
 type ReferencePayload = {
@@ -50,6 +51,7 @@ type ReferencePayload = {
   price: number | null;
   currency: string;
   source_url: string;
+  sold_at: string | null;
 };
 
 type ReferencePoint = {
@@ -311,6 +313,26 @@ function parsePrice(value: unknown, filePath: string) {
   return amount;
 }
 
+function parseSoldAt(value: unknown): string | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const candidates = [value.ends_at, value.ends_at_string, value.sold_at, value.closed_at];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || candidate.length === 0) {
+      continue;
+    }
+
+    const ms = Date.parse(candidate);
+    if (Number.isFinite(ms)) {
+      return new Date(ms).toISOString();
+    }
+  }
+
+  return null;
+}
+
 function validateAuctionetItem(value: unknown, filePath: string): AuctionetItemJson {
   if (!isRecord(value)) {
     throw new Error(`${filePath} must contain a JSON object`);
@@ -329,6 +351,7 @@ function validateAuctionetItem(value: unknown, filePath: string): AuctionetItemJ
     status: typeof value.status === "string" ? value.status : null,
     price: parsePrice(value.price, filePath),
     currency,
+    sold_at: parseSoldAt(value.dates),
   };
 }
 
@@ -419,6 +442,7 @@ function buildPoints(artifact: VectorArtifact, item: AuctionetItemJson): Referen
       price: item.price,
       currency: item.currency,
       source_url: item.source_url ?? artifact.source_url ?? "",
+      sold_at: item.sold_at,
     },
   }));
 }

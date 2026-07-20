@@ -21,6 +21,7 @@ export type MatchItem = {
   price: number;
   currency: string;
   similarity_score: number;
+  sold_at: string | null;
   createdAt: string;
 };
 
