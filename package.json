@@ -10,6 +10,7 @@
     "embed:auctionet-vectors": "tsx scripts/embed-auctionet-vectors.ts",
     "seed:references": "tsx scripts/seed-references.ts",
     "scrape:auctionet": "tsx scripts/scrape-auctionet.ts",
+    "catalog:pipeline": "tsx scripts/run-catalog-pipeline.ts",
     "test": "vitest"
   },
   "dependencies": {
