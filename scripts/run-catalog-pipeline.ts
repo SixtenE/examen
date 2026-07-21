@@ -449,20 +449,12 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    // Close clients so Railway cron exits instead of hanging on open handles.
+    // Destroy the S3 client so Railway cron exits instead of hanging on open handles.
+    // QdrantClient has no close/destroy API; it uses plain fetch.
     try {
       const { s3Client } = await import("../lib/s3");
       s3Client.destroy();
     } catch {
       // S3 may be unset in dry local exploration.
-    }
-
-    try {
-      const { qdrantClient } = await import("../lib/qdrant");
-      if (typeof qdrantClient.close === "function") {
-        await qdrantClient.close();
-      }
-    } catch {
-      // Qdrant may be unset when seeding was skipped.
     }
   });
