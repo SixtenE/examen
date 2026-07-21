@@ -3,7 +3,7 @@ import { matches, queries } from "@/db/schema";
 import type { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { s3Client } from "@/lib/s3";
+import { requireAwsBucketName, s3Client } from "@/lib/s3";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { isUuid } from "@/lib/utils";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -35,7 +35,7 @@ export async function GET(
     const image_url = await getSignedUrl(
       s3Client,
       new GetObjectCommand({
-        Bucket: process.env.AWS_BUCKET_NAME,
+        Bucket: requireAwsBucketName(),
         Key: query.image_key,
       }),
       {

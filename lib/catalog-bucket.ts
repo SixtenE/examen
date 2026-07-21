@@ -18,14 +18,9 @@ async function getS3Client(): Promise<S3Client> {
   return s3Client;
 }
 
-function requireBucketName() {
-  const bucket = process.env.AWS_BUCKET_NAME;
-
-  if (!bucket) {
-    throw new Error("AWS_BUCKET_NAME must be set");
-  }
-
-  return bucket;
+async function requireBucketName() {
+  const { requireAwsBucketName } = await import("@/lib/s3");
+  return requireAwsBucketName();
 }
 
 async function fileExists(filePath: string) {
@@ -39,11 +34,12 @@ async function fileExists(filePath: string) {
 
 export async function catalogObjectExists(key: string) {
   const s3Client = await getS3Client();
+  const bucket = await requireBucketName();
 
   try {
     await s3Client.send(
       new HeadObjectCommand({
-        Bucket: requireBucketName(),
+        Bucket: bucket,
         Key: key,
       }),
     );
@@ -76,7 +72,7 @@ export async function catalogObjectExists(key: string) {
 
 export async function listCatalogKeys(prefix: string) {
   const s3Client = await getS3Client();
-  const bucket = requireBucketName();
+  const bucket = await requireBucketName();
   const keys: string[] = [];
   let continuationToken: string | undefined;
 
@@ -105,16 +101,17 @@ export async function listCatalogKeys(prefix: string) {
 
 export async function downloadCatalogObject(key: string, localPath: string) {
   const s3Client = await getS3Client();
+  const bucket = await requireBucketName();
   const response = await s3Client.send(
     new GetObjectCommand({
-      Bucket: requireBucketName(),
+      Bucket: bucket,
       Key: key,
     }),
   );
 
   const body = response.Body;
   if (!body) {
-    throw new Error(`Empty body for s3://${requireBucketName()}/${key}`);
+    throw new Error(`Empty body for s3://${bucket}/${key}`);
   }
 
   const bytes = Buffer.from(await body.transformToByteArray());
@@ -132,10 +129,11 @@ export async function uploadCatalogObject(
   }
 
   const s3Client = await getS3Client();
+  const bucket = await requireBucketName();
   const body = await readFile(localPath);
   await s3Client.send(
     new PutObjectCommand({
-      Bucket: requireBucketName(),
+      Bucket: bucket,
       Key: key,
       Body: body,
       ContentType: "application/json",

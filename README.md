@@ -118,13 +118,15 @@ Create a **separate** Railway service for the cron (do not put the cron schedule
 pnpm catalog:pipeline -- --dry-run --max-pages 1 --max-items 5
 ```
 
-Extra env for the cron service (in addition to the app vars):
+Extra env for the cron service (in addition to Qdrant / OpenRouter):
 
 ```bash
-AWS_ENDPOINT_URL=https://storage.railway.app   # from the Railway Bucket credentials
+# Easiest on Railway: Variables → Add variables → from Bucket → AWS SDK preset
+# That injects AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_ENDPOINT_URL, etc.
+#
+# Or reference Railway Bucket credentials directly (also supported):
+# ACCESS_KEY_ID, SECRET_ACCESS_KEY, REGION, ENDPOINT, BUCKET
 CATALOG_CATEGORIES=9-ceramics-porcelain,28-paintings
-# Optional override with a custom listing URL:
-# CATALOG_CATEGORIES=28-paintings|https://auctionet.com/en/search/28-paintings?is=ended
 ```
 
 Bucket keys live under `catalog/auctionet/items/...` so they never collide with Query image Keys. See [ADR 0008](./docs/adr/0008-daily-catalog-pipeline-on-railway.md).
