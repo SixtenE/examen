@@ -26,8 +26,12 @@ The embed + vector search + persist step that produces Matches for a Query. Trig
 _Avoid_: Matching, search, indexing
 
 **Match**:
-A stored result linking one Query to one Auctionet Item, carrying a similarity score and a snapshot of that item's metadata at generation time. When an item has multiple Reference images, Match generation keeps only the highest-scoring image for that item.
+A stored result linking one Query to one Auctionet Item, carrying a similarity score and a snapshot of that item's metadata at generation time. When an item has multiple Reference images, Match generation keeps only the highest-scoring image for that item. List order may prefer more recent sales while the similarity score stays the visual score.
 _Avoid_: Result, hit
+
+**Sold At**:
+The auction end / sale moment for a sold Auctionet Item. Sourced from Auctionet VIP `ends_at` and snapshotted onto Matches at generation time.
+_Avoid_: Ends at, sale date, hammer date
 
 **Realized Price**:
 The final sale amount for a sold Auctionet Item. Nullable when the amount could not be extracted from source data; never represented as zero to mean "unknown".

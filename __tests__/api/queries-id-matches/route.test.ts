@@ -8,7 +8,11 @@ const mockGetSignedUrl = vi.fn().mockResolvedValue("https://signed.example/image
 const mockEmbedImageUrl = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
 const mockSearch = vi.fn();
 
-function hit(auctionetId: string, score: number) {
+const NOW_UNIX = Math.floor(new Date("2026-07-24T12:00:00Z").getTime() / 1000);
+const MONTH_AGO_UNIX = NOW_UNIX - 30 * 86_400;
+const FIVE_YEARS_AGO_UNIX = NOW_UNIX - 5 * 365 * 86_400;
+
+function hit(auctionetId: string, score: number, soldAt: number | null = MONTH_AGO_UNIX) {
   return {
     score,
     payload: {
@@ -19,6 +23,7 @@ function hit(auctionetId: string, score: number) {
       price: 100,
       currency: "SEK",
       source_url: `https://www.auctionet.com/${auctionetId}`,
+      sold_at: soldAt,
     },
   };
 }
@@ -58,6 +63,7 @@ describe("GET /api/queries/[id]/matches", () => {
               price: 100,
               currency: "SEK",
               similarity_score: 0.92,
+              sold_at: new Date("2021-07-24T12:00:00Z"),
               createdAt: new Date("2026-06-11T10:05:00Z"),
             },
             {
@@ -69,7 +75,20 @@ describe("GET /api/queries/[id]/matches", () => {
               price: 100,
               currency: "SEK",
               similarity_score: 0.85,
+              sold_at: new Date("2021-07-24T12:00:00Z"),
               createdAt: new Date("2026-06-11T10:04:00Z"),
+            },
+            {
+              id: "6ba7b812-9dad-11d1-80b4-00c04fd430ca",
+              query_id: QUERY_ID,
+              auctionet_id: "lot-2",
+              image_url: "https://example.com/c.jpg",
+              title: "Recent vase",
+              price: 120,
+              currency: "SEK",
+              similarity_score: 0.85,
+              sold_at: new Date("2026-06-24T12:00:00Z"),
+              createdAt: new Date("2026-06-11T10:06:00Z"),
             },
           ],
         ],
@@ -84,17 +103,23 @@ describe("GET /api/queries/[id]/matches", () => {
     vi.doUnmock("@/lib/qdrant");
     vi.doUnmock("@/lib/embeddings");
     vi.doUnmock("@/lib/rate-limit");
+    vi.useRealTimers();
   });
 
-  it("deduplicates matches by auctionet_id", async () => {
+  it("deduplicates matches by auctionet_id and ranks by recency-weighted score", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-24T12:00:00Z"));
+
     const { GET } = await import("@/app/api/queries/[id]/matches/route");
     const response = await GET({} as Request, { params });
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toHaveLength(1);
-    expect(body[0].auctionet_id).toBe("lot-1");
-    expect(body[0].similarity_score).toBe(0.92);
+    expect(body).toHaveLength(2);
+    expect(body[0].auctionet_id).toBe("lot-2");
+    expect(body[0].similarity_score).toBe(0.85);
+    expect(body[1].auctionet_id).toBe("lot-1");
+    expect(body[1].similarity_score).toBe(0.92);
   });
 
   it("returns 404 for invalid UUIDs", async () => {
@@ -125,17 +150,17 @@ describe("POST /api/queries/[id]/matches", () => {
     mockSearch.mockImplementation((collection: string) => {
       if (collection === "references-28-paintings") {
         return Promise.resolve([
-          hit("shared-item", 0.95),
-          hit("shared-item", 0.8),
+          hit("shared-item", 0.95, MONTH_AGO_UNIX),
+          hit("shared-item", 0.8, MONTH_AGO_UNIX),
           ...Array.from({ length: 20 }, (_, index) =>
             hit(`item-${String(index + 2).padStart(3, "0")}`, 0.94 - index * 0.01),
           ),
         ]);
       }
 
-      if (collection === "references-9-ceramics-porcelain") {
+      if (collection === "references") {
         return Promise.resolve([
-          hit("shared-item", 0.85),
+          hit("shared-item", 0.85, MONTH_AGO_UNIX),
           ...Array.from({ length: 25 }, (_, index) =>
             hit(`item-${String(index + 22).padStart(3, "0")}`, 0.74 - index * 0.01),
           ),
@@ -194,9 +219,13 @@ describe("POST /api/queries/[id]/matches", () => {
     vi.doUnmock("@/lib/embeddings");
     vi.doUnmock("@/lib/rate-limit");
     vi.doUnmock("@aws-sdk/s3-request-presigner");
+    vi.useRealTimers();
   });
 
   it("searches all category collections, deduplicates globally, and keeps top 32", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-24T12:00:00Z"));
+
     const { POST } = await import("@/app/api/queries/[id]/matches/route");
     const response = await POST({} as Request, { params });
     const body = await response.json();
@@ -208,16 +237,45 @@ describe("POST /api/queries/[id]/matches", () => {
       expect.objectContaining({ limit: 128, with_payload: true }),
     );
     expect(mockSearch).toHaveBeenCalledWith(
-      "references-9-ceramics-porcelain",
+      "references",
       expect.objectContaining({ limit: 128, with_payload: true }),
     );
     expect(body).toHaveLength(32);
     expect(body[0].auctionet_id).toBe("shared-item");
     expect(body[0].similarity_score).toBe(0.95);
-    expect(body[1].auctionet_id).toBe("item-002");
-    expect(body[31].auctionet_id).toBe("item-032");
     expect(body.some((row: { auctionet_id: string }) => row.auctionet_id === "item-046")).toBe(
       false,
     );
+  });
+
+  it("ranks a recent mid score above an old high score", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-24T12:00:00Z"));
+
+    mockSearch.mockImplementation((collection: string) => {
+      if (collection === "references-28-paintings") {
+        return Promise.resolve([
+          hit("old-high", 0.92, FIVE_YEARS_AGO_UNIX),
+          hit("recent-mid", 0.85, MONTH_AGO_UNIX),
+        ]);
+      }
+
+      if (collection === "references") {
+        return Promise.resolve([]);
+      }
+
+      return Promise.reject(new Error(`unexpected collection: ${collection}`));
+    });
+
+    const { POST } = await import("@/app/api/queries/[id]/matches/route");
+    const response = await POST({} as Request, { params });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toHaveLength(2);
+    expect(body[0].auctionet_id).toBe("recent-mid");
+    expect(body[0].similarity_score).toBe(0.85);
+    expect(body[1].auctionet_id).toBe("old-high");
+    expect(body[1].similarity_score).toBe(0.92);
   });
 });

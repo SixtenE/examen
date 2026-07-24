@@ -202,36 +202,94 @@ export async function syncCatalogPrefixDown(options: {
   return { downloaded, skipped, total: keys.length };
 }
 
+/** One local path per bucket key — keeps concurrent workers from double-putting. */
+function uniqueFilesByBucketKey(files: string[], localRoot: string) {
+  const byKey = new Map<string, string>();
+
+  for (const localPath of files) {
+    const key = localPathToBucketKey(localPath, localRoot);
+    if (!byKey.has(key)) {
+      byKey.set(key, localPath);
+    }
+  }
+
+  return [...byKey.entries()].map(([key, localPath]) => ({ key, localPath }));
+}
+
+async function uploadFilesConcurrently(options: {
+  files: string[];
+  localRoot: string;
+  skipExistingRemote?: boolean;
+  concurrency?: number;
+  onProgress?: (done: number, total: number) => void;
+}) {
+  const entries = uniqueFilesByBucketKey(options.files, options.localRoot);
+  const concurrency = Math.max(1, options.concurrency ?? 1);
+  let nextIndex = 0;
+  let uploaded = 0;
+  let skipped = 0;
+  let done = 0;
+
+  async function worker() {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+
+      if (index >= entries.length) {
+        return;
+      }
+
+      const entry = entries[index];
+      const result = await uploadCatalogObject(entry.localPath, entry.key, {
+        skipExisting: options.skipExistingRemote !== false,
+      });
+
+      if (result.skipped) {
+        skipped += 1;
+      } else {
+        uploaded += 1;
+      }
+
+      done += 1;
+      options.onProgress?.(done, entries.length);
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, Math.max(entries.length, 1)) },
+      () => worker(),
+    ),
+  );
+
+  return { uploaded, skipped, total: entries.length };
+}
+
 export async function syncCatalogDirUp(options: {
   localDir: string;
   localRoot?: string;
   skipExistingRemote?: boolean;
+  concurrency?: number;
+  onProgress?: (done: number, total: number) => void;
 }) {
   const localRoot = options.localRoot ?? "data/auctionet/items";
   const files = await discoverLocalFiles(options.localDir);
-  let uploaded = 0;
-  let skipped = 0;
 
-  for (const localPath of files) {
-    const key = localPathToBucketKey(localPath, localRoot);
-    const result = await uploadCatalogObject(localPath, key, {
-      skipExisting: options.skipExistingRemote !== false,
-    });
-
-    if (result.skipped) {
-      skipped += 1;
-    } else {
-      uploaded += 1;
-    }
-  }
-
-  return { uploaded, skipped, total: files.length };
+  return uploadFilesConcurrently({
+    files,
+    localRoot,
+    skipExistingRemote: options.skipExistingRemote,
+    concurrency: options.concurrency,
+    onProgress: options.onProgress,
+  });
 }
 
 export async function syncVectorsDirUp(options: {
   vectorsDir: string;
   localRoot?: string;
   skipExistingRemote?: boolean;
+  concurrency?: number;
+  onProgress?: (done: number, total: number) => void;
 }) {
   const localRoot = options.localRoot ?? "data/auctionet/items";
 
@@ -258,21 +316,11 @@ export async function syncVectorsDirUp(options: {
   await walk(options.vectorsDir);
   files.sort();
 
-  let uploaded = 0;
-  let skipped = 0;
-
-  for (const localPath of files) {
-    const key = localPathToBucketKey(localPath, localRoot);
-    const result = await uploadCatalogObject(localPath, key, {
-      skipExisting: options.skipExistingRemote !== false,
-    });
-
-    if (result.skipped) {
-      skipped += 1;
-    } else {
-      uploaded += 1;
-    }
-  }
-
-  return { uploaded, skipped, total: files.length };
+  return uploadFilesConcurrently({
+    files,
+    localRoot,
+    skipExistingRemote: options.skipExistingRemote,
+    concurrency: options.concurrency,
+    onProgress: options.onProgress,
+  });
 }

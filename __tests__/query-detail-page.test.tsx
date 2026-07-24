@@ -25,7 +25,20 @@ const mockMatches = [
     price: 500,
     currency: "SEK",
     similarity_score: 0.87,
+    sold_at: "2024-08-05T19:25:00.000Z",
     createdAt: "2026-06-11T10:05:00.000Z",
+  },
+  {
+    id: "6ba7b811-9dad-11d1-80b4-00c04fd430c9",
+    query_id: QUERY_ID,
+    auctionet_id: "12346",
+    image_url: "https://example.com/match-2.jpg",
+    title: "Undated clock",
+    price: 200,
+    currency: "SEK",
+    similarity_score: 0.7,
+    sold_at: null,
+    createdAt: "2026-06-11T10:06:00.000Z",
   },
 ];
 
@@ -108,6 +121,8 @@ test("renders query title and matches", async () => {
   expect(await screen.findByText("Antique clock")).toBeTruthy();
   expect(await screen.findByText("500 SEK")).toBeTruthy();
   expect(await screen.findByText("87% match")).toBeTruthy();
+  expect(await screen.findByText("2024")).toBeTruthy();
+  expect(await screen.findByText("N/A")).toBeTruthy();
 });
 
 test("starts match generation for pending queries", async () => {

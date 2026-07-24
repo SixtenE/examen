@@ -80,16 +80,26 @@ function MatchItemSkeleton() {
   );
 }
 
-function MatchBadge({ score }: { score: number }) {
+function MatchBadge({
+  score,
+  soldAt,
+}: {
+  score: number;
+  soldAt: string | null;
+}) {
   const percentage = Math.round(Math.min(Math.max(score, 0), 1) * 100);
   const hue = percentage * 1.2;
   const style = {
     backgroundColor: `hsl(${hue} 70% 90%)`,
     color: `hsl(${hue} 70% 25%)`,
   };
+  const year =
+    soldAt && !Number.isNaN(new Date(soldAt).getTime())
+      ? String(new Date(soldAt).getUTCFullYear())
+      : "N/A";
 
   return (
-    <>
+    <span className="flex shrink-0 items-center gap-1.5">
       <Badge
         className="hidden tracking-normal xl:block"
         variant="secondary"
@@ -104,7 +114,10 @@ function MatchBadge({ score }: { score: number }) {
       >
         {percentage}%
       </Badge>
-    </>
+      <Badge className="tracking-normal" variant="outline">
+        {year}
+      </Badge>
+    </span>
   );
 }
 
@@ -257,7 +270,10 @@ export default function Page() {
                         className="line-clamp-1 flex items-center justify-between gap-2 text-2xl font-semibold tracking-tighter"
                       >
                         {match.price} {match.currency}
-                        <MatchBadge score={match.similarity_score} />
+                        <MatchBadge
+                          score={match.similarity_score}
+                          soldAt={match.sold_at}
+                        />
                       </motion.p>
                     </div>
                   </Link>

@@ -11,6 +11,7 @@
     "seed:references": "tsx scripts/seed-references.ts",
     "scrape:auctionet": "tsx scripts/scrape-auctionet.ts",
     "catalog:pipeline": "tsx scripts/run-catalog-pipeline.ts",
+    "catalog:upload": "tsx scripts/upload-catalog-bucket.ts",
     "test": "vitest"
   },
   "dependencies": {
