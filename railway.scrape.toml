@@ -5,6 +5,6 @@ builder = "RAILPACK"
 buildCommand = "pnpm install --frozen-lockfile"
 
 [deploy]
-startCommand = "pnpm catalog:pipeline -- --skip-embed --skip-seed"
+startCommand = "pnpm catalog:pipeline -- --skip-embed --skip-seed --max-items 500"
 cronSchedule = "0 2 * * *"
 restartPolicyType = "NEVER"
