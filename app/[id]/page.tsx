@@ -42,8 +42,13 @@ const matchQueryOptions = (id: string) =>
       await throwApiError(res, "Failed to fetch matches");
       return res.json();
     },
-    refetchInterval: (query) =>
-      query.state.data && query.state.data.length > 0 ? false : 500,
+    refetchInterval: (query) => {
+      if (isRateLimitError(query.state.error)) {
+        const seconds = query.state.error.retryAfterSeconds;
+        return (seconds && seconds > 0 ? seconds : 60) * 1000;
+      }
+      return query.state.data && query.state.data.length > 0 ? false : 500;
+    },
     retry: (failureCount, error) =>
       !isRateLimitError(error) && failureCount < 3,
   });

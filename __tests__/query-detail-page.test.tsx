@@ -77,8 +77,40 @@ function renderPage() {
 afterEach(() => {
   vi.clearAllMocks();
   queryClient.clear();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
+
+function matchesGetCallCount(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls.filter(
+    ([url, init]) =>
+      url === `/api/queries/${QUERY_ID}/matches` &&
+      (init === undefined || init.method === undefined || init.method === "GET"),
+  ).length;
+}
+
+function rateLimitedMatchesFetch() {
+  return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+    if (url === `/api/queries/${QUERY_ID}`) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => mockQuery,
+      });
+    }
+
+    if (url === `/api/queries/${QUERY_ID}/matches` && init?.method !== "POST") {
+      return Promise.resolve({
+        ok: false,
+        status: 429,
+        headers: new Headers({ "Retry-After": "10" }),
+        json: async () => ({ error: "Too many requests" }),
+      });
+    }
+
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+  });
+}
 
 test("renders query title and matches", async () => {
   const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
@@ -219,5 +251,45 @@ test("shows a rate-limit toast when match generation is rate limited", async () 
     expect(toast.error).toHaveBeenCalledWith(
       "Too many requests. Try again in 20 seconds.",
     );
+  });
+});
+
+test("shows a rate-limit toast only once while matches poll is rate limited", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const fetchMock = rateLimitedMatchesFetch();
+  vi.stubGlobal("fetch", fetchMock);
+
+  renderPage();
+
+  await waitFor(() => {
+    expect(toast.error).toHaveBeenCalledWith(
+      "Too many requests. Try again in 10 seconds.",
+    );
+  });
+  expect(toast.error).toHaveBeenCalledTimes(1);
+
+  const callsAfterToast = matchesGetCallCount(fetchMock);
+  await vi.advanceTimersByTimeAsync(2000);
+
+  expect(toast.error).toHaveBeenCalledTimes(1);
+  expect(matchesGetCallCount(fetchMock)).toBe(callsAfterToast);
+});
+
+test("resumes matches poll after Retry-After when rate limited", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const fetchMock = rateLimitedMatchesFetch();
+  vi.stubGlobal("fetch", fetchMock);
+
+  renderPage();
+
+  await waitFor(() => {
+    expect(toast.error).toHaveBeenCalledTimes(1);
+  });
+
+  const callsAfterToast = matchesGetCallCount(fetchMock);
+  await vi.advanceTimersByTimeAsync(10_000);
+
+  await waitFor(() => {
+    expect(matchesGetCallCount(fetchMock)).toBeGreaterThan(callsAfterToast);
   });
 });
