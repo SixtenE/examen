@@ -2,7 +2,7 @@ import { db } from "@/db";
 import { matches, queries } from "@/db/schema";
 import { embedImageUrl } from "@/lib/embeddings";
 import { qdrantClient } from "@/lib/qdrant";
-import { s3Client } from "@/lib/s3";
+import { requireAwsBucketName, s3Client } from "@/lib/s3";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { and, desc, eq, ne } from "drizzle-orm";
@@ -120,7 +120,7 @@ export async function POST(
     const imageUrl = await getSignedUrl(
       s3Client,
       new GetObjectCommand({
-        Bucket: process.env.AWS_BUCKET_NAME,
+        Bucket: requireAwsBucketName(),
         Key: query.image_key,
       }),
       { expiresIn: 60 * 5 },

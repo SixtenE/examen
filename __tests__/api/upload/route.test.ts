@@ -23,6 +23,7 @@ vi.mock("heic-convert", () => ({
 
 vi.mock("@/lib/s3", () => ({
   s3Client: { send: (...args: unknown[]) => mockS3Send(...args) },
+  requireAwsBucketName: () => "test-bucket",
 }));
 
 vi.mock("@/db", () => ({

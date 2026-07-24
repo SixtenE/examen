@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import { db } from "@/db";
 import { queries } from "@/db/schema";
 import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
-import { s3Client } from "@/lib/s3";
+import { requireAwsBucketName, s3Client } from "@/lib/s3";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15MB
@@ -229,7 +229,7 @@ export async function POST(request: NextRequest) {
 
     const key = nanoid();
     const command = new PutObjectCommand({
-      Bucket: process.env.AWS_BUCKET_NAME,
+      Bucket: requireAwsBucketName(),
       Key: key,
       Body: body,
       ContentType: contentType,
@@ -255,7 +255,7 @@ export async function POST(request: NextRequest) {
       try {
         await s3Client.send(
           new DeleteObjectCommand({
-            Bucket: process.env.AWS_BUCKET_NAME,
+            Bucket: requireAwsBucketName(),
             Key: key,
           }),
         );

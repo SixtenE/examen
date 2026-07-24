@@ -15,7 +15,10 @@ describe("GET /api/queries/[id]", () => {
     vi.doMock("@aws-sdk/s3-request-presigner", () => ({
       getSignedUrl: (...args: unknown[]) => mockGetSignedUrl(...args),
     }));
-    vi.doMock("@/lib/s3", () => ({ s3Client: {} }));
+    vi.doMock("@/lib/s3", () => ({
+      s3Client: {},
+      requireAwsBucketName: () => "test-bucket",
+    }));
     vi.doMock("@/db", () => {
       const mockDb = createDbMock({
         selectResults: [
@@ -85,7 +88,10 @@ describe("DELETE /api/queries/[id]", () => {
     vi.doMock("@/lib/rate-limit", () => ({
       enforceRateLimit: vi.fn().mockResolvedValue(null),
     }));
-    vi.doMock("@/lib/s3", () => ({ s3Client: {} }));
+    vi.doMock("@/lib/s3", () => ({
+      s3Client: {},
+      requireAwsBucketName: () => "test-bucket",
+    }));
     vi.doMock("@/db", () => {
       const mockDb = createDbMock({
         selectResults: [
