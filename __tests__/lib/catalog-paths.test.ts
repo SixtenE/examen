@@ -77,7 +77,7 @@ describe("catalog-paths", () => {
     expect(parseCatalogCategories("28-paintings")).toEqual([
       {
         segment: "28-paintings",
-        url: "https://auctionet.com/en/search/28-paintings?is=ended",
+        url: "https://auctionet.com/en/search/28-paintings?is=ended&company_id=232",
       },
     ]);
 
@@ -91,5 +91,22 @@ describe("catalog-paths", () => {
         url: "https://auctionet.com/en/search/9-ceramics-porcelain?is=ended&sort=new",
       },
     ]);
+  });
+
+  it("defaults to company 232 leaf categories", () => {
+    const categories = parseCatalogCategories(undefined);
+    expect(categories.length).toBeGreaterThan(20);
+    expect(categories.some((category) => category.segment === "28-paintings")).toBe(
+      true,
+    );
+    expect(
+      categories.find((category) => category.segment === "28-paintings")?.url,
+    ).toContain("company_id=232");
+    expect(categories.some((category) => category.segment === "25-art")).toBe(
+      false,
+    );
+    expect(
+      categories.some((category) => category.segment === "16-furniture"),
+    ).toBe(false);
   });
 });

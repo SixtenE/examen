@@ -4,22 +4,67 @@ export const CATALOG_BUCKET_PREFIX = "scrape";
 export const LOCAL_CATALOG_ROOT = "data/auctionet/items";
 export const CATEGORY_SEGMENT_PATTERN = /^\d+-[a-z0-9-]+$/;
 export const MAX_REFERENCES_PER_ITEM = 100;
+export const CRAFOORD_STOCKHOLM_COMPANY_ID = 232;
 
 export type CatalogCategory = {
   segment: string;
   url: string;
 };
 
-export const DEFAULT_CATALOG_CATEGORIES: CatalogCategory[] = [
-  {
-    segment: "9-ceramics-porcelain",
-    url: "https://auctionet.com/en/search/9-ceramics-porcelain?is=ended",
-  },
-  {
-    segment: "28-paintings",
-    url: "https://auctionet.com/en/search/28-paintings?is=ended",
-  },
-];
+/** Static leaf set for Crafoord Stockholm — parents Art/Furniture expanded. */
+export const COMPANY_232_LEAF_SEGMENTS = [
+  "1-lighting-lamps",
+  "6-glass",
+  "9-ceramics-porcelain",
+  "13-jewellery-gemstones",
+  "17-other",
+  "18-armchairs-chairs",
+  "19-tables",
+  "20-sofas-seatings",
+  "22-dining-room-furniture",
+  "23-cupboards-cabinets-shelves",
+  "24-chests-of-drawers",
+  "26-photography",
+  "27-engravings-prints",
+  "28-paintings",
+  "29-sculptures-bronzes",
+  "30-other",
+  "31-clocks-watches",
+  "35-carpets-textiles",
+  "38-silver-metals",
+  "42-mirrors",
+  "43-miscellaneous",
+  "44-toys",
+  "46-coins-medals-stamps",
+  "49-vintage-designer-fashion",
+  "50-books-maps-manuscripts",
+  "57-photo-cameras-lenses",
+  "58-swedish-folk-art",
+  "117-asiatica",
+  "119-drawings",
+  "134-ethnographica",
+  "137-weapons-militaria",
+  "249-vehicles-boats-parts",
+  "261-collectables",
+  "270-garden-architectural",
+  "279-desks",
+  "280-coffee-tables",
+  "281-dining-tables",
+] as const;
+
+export function companyCategoryUrl(
+  segment: string,
+  companyId = CRAFOORD_STOCKHOLM_COMPANY_ID,
+) {
+  return `https://auctionet.com/en/search/${assertCategorySegment(segment)}?is=ended&company_id=${companyId}`;
+}
+
+/** Crafoord Stockholm (company 232) leaf categories — Art/Furniture parents expanded. */
+export const DEFAULT_CATALOG_CATEGORIES: CatalogCategory[] =
+  COMPANY_232_LEAF_SEGMENTS.map((segment) => ({
+    segment,
+    url: companyCategoryUrl(segment),
+  }));
 
 export function assertCategorySegment(segment: string) {
   if (!CATEGORY_SEGMENT_PATTERN.test(segment)) {
@@ -122,7 +167,7 @@ export function parseCatalogCategories(
       const segment = assertCategorySegment(trimmed);
       return {
         segment,
-        url: `https://auctionet.com/en/search/${segment}?is=ended`,
+        url: companyCategoryUrl(segment),
       };
     }
 

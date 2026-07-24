@@ -5,15 +5,23 @@ import { constants } from "node:fs";
 import { access, mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  discoverCompanyLeafCategories,
+  INCREMENTAL_LISTING_ORDER,
+  listingOrdersForSegment,
+} from "../lib/auctionet-leaves";
+import {
   categoryBucketPrefix,
   categoryItemsDir,
   categoryVectorsBucketPrefix,
   categoryVectorsDir,
+  CRAFOORD_STOCKHOLM_COMPANY_ID,
   expectedPointIds,
   localPathToBucketKey,
   parseCatalogCategories,
   type CatalogCategory,
 } from "../lib/catalog-paths";
+
+type PipelineMode = "backfill" | "incremental";
 
 type CliOptions = {
   categories: CatalogCategory[];
@@ -23,6 +31,9 @@ type CliOptions = {
   skipSeed: boolean;
   maxPages: number | null;
   maxItems: number | null;
+  mode: PipelineMode;
+  discoverLeaves: boolean;
+  companyId: number;
 };
 
 type ItemSummary = {
@@ -40,12 +51,15 @@ function usage() {
     "",
     "Options:",
     "  --category <segment|url>   Category segment, or segment|url (repeatable)",
+    "  --mode <backfill|incremental>  Scrape strategy (default: backfill)",
+    "  --discover-leaves          Refresh leaf categories from Auctionet facets",
+    `  --company-id <n>           Company for --discover-leaves (default: ${CRAFOORD_STOCKHOLM_COMPANY_ID})`,
     "  --dry-run                  Print planned work without side effects",
     "  --skip-scrape              Skip Auctionet scraping",
     "  --skip-embed               Skip embedding",
     "  --skip-seed                Skip Qdrant seeding",
     "  --max-pages <n>            Forwarded to scrape:auctionet",
-    "  --max-items <n>            Forwarded to scrape/embed/seed",
+    "  --max-items <n>            Max newly scraped items across categories (skips excluded)",
   ].join("\n");
 }
 
@@ -69,7 +83,9 @@ function parsePositiveInteger(value: string, name: string) {
   return parsed;
 }
 
-function parseArgs(args: string[]): CliOptions {
+function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
+  categoryArgs: string[];
+} {
   const categoryArgs: string[] = [];
   let dryRun = false;
   let skipScrape = false;
@@ -77,6 +93,9 @@ function parseArgs(args: string[]): CliOptions {
   let skipSeed = false;
   let maxPages: number | null = null;
   let maxItems: number | null = null;
+  let mode: PipelineMode = "backfill";
+  let discoverLeaves = false;
+  let companyId = CRAFOORD_STOCKHOLM_COMPANY_ID;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -86,6 +105,25 @@ function parseArgs(args: string[]): CliOptions {
         break;
       case "--category":
         categoryArgs.push(readOptionValue(args, index, arg));
+        index += 1;
+        break;
+      case "--mode": {
+        const value = readOptionValue(args, index, arg);
+        if (value !== "backfill" && value !== "incremental") {
+          throw new Error("--mode must be backfill or incremental");
+        }
+        mode = value;
+        index += 1;
+        break;
+      }
+      case "--discover-leaves":
+        discoverLeaves = true;
+        break;
+      case "--company-id":
+        companyId = parsePositiveInteger(
+          readOptionValue(args, index, arg),
+          arg,
+        );
         index += 1;
         break;
       case "--dry-run":
@@ -117,19 +155,17 @@ function parseArgs(args: string[]): CliOptions {
     }
   }
 
-  const categories =
-    categoryArgs.length > 0
-      ? parseCatalogCategories(categoryArgs.join(","))
-      : parseCatalogCategories(process.env.CATALOG_CATEGORIES);
-
   return {
-    categories,
+    categoryArgs,
     dryRun,
     skipScrape,
     skipEmbed,
     skipSeed,
     maxPages,
     maxItems,
+    mode,
+    discoverLeaves,
+    companyId,
   };
 }
 
@@ -208,10 +244,10 @@ function runScript(scriptPath: string, scriptArgs: string[], dryRun: boolean) {
 
   if (dryRun) {
     console.log(`dry-run: ${command}`);
-    return Promise.resolve(0);
+    return Promise.resolve({ code: 0, output: "" });
   }
 
-  return new Promise<number>((resolve, reject) => {
+  return new Promise<{ code: number; output: string }>((resolve, reject) => {
     const child = spawn(
       process.execPath,
       [
@@ -220,16 +256,37 @@ function runScript(scriptPath: string, scriptArgs: string[], dryRun: boolean) {
         ...scriptArgs,
       ],
       {
-        stdio: "inherit",
+        stdio: ["inherit", "pipe", "pipe"],
         env: process.env,
       },
     );
 
+    let output = "";
+
+    child.stdout?.on("data", (chunk: Buffer | string) => {
+      const text = chunk.toString();
+      output += text;
+      process.stdout.write(text);
+    });
+    child.stderr?.on("data", (chunk: Buffer | string) => {
+      const text = chunk.toString();
+      output += text;
+      process.stderr.write(text);
+    });
+
     child.on("error", reject);
     child.on("close", (code) => {
-      resolve(code ?? 1);
+      resolve({ code: code ?? 1, output });
     });
   });
+}
+
+function parseScrapeSaved(output: string) {
+  const matches = [...output.matchAll(/SCRAPE_SAVED=(\d+)/g)];
+  if (matches.length === 0) {
+    return 0;
+  }
+  return Number(matches[matches.length - 1][1]);
 }
 
 async function artifactAlreadySeeded(
@@ -309,36 +366,58 @@ async function prepareVectors(category: CatalogCategory, dryRun: boolean) {
   return { alreadyInQdrant, downloaded, pendingEmbed, unsold };
 }
 
-async function runCategory(category: CatalogCategory, options: CliOptions) {
+async function runCategory(
+  category: CatalogCategory,
+  options: CliOptions,
+  scrapeMaxItems: number | null,
+) {
   const itemsDir = categoryItemsDir(category.segment);
   const vectorsDir = categoryVectorsDir(category.segment);
   const itemsPrefix = categoryBucketPrefix(category.segment);
+  let scrapedSaved = 0;
 
   console.log(`\n=== ${category.segment} ===`);
 
   if (!options.skipScrape) {
-    const scrapeArgs = ["--url", category.url];
-    if (options.maxPages !== null) {
-      scrapeArgs.push("--max-pages", String(options.maxPages));
-    }
-    if (options.maxItems !== null) {
-      scrapeArgs.push("--max-items", String(options.maxItems));
-    }
+    if (scrapeMaxItems === 0) {
+      console.log("Scrape max-items budget exhausted — skipping scrape");
+    } else {
+      const scrapeArgs = ["--url", category.url];
+      if (options.maxPages !== null) {
+        scrapeArgs.push("--max-pages", String(options.maxPages));
+      }
+      if (scrapeMaxItems !== null) {
+        scrapeArgs.push("--max-items", String(scrapeMaxItems));
+      }
 
-    console.log("Scraping Auctionet (skips existing bucket objects)...");
-    const scrapeCode = await runScript(
-      "scripts/scrape-auctionet.ts",
-      scrapeArgs,
-      options.dryRun,
-    );
-    if (scrapeCode !== 0) {
-      throw new Error(`scrape:auctionet exited with code ${scrapeCode}`);
+      if (options.mode === "incremental") {
+        scrapeArgs.push("--orders", INCREMENTAL_LISTING_ORDER);
+        scrapeArgs.push("--incremental");
+      } else {
+        scrapeArgs.push(
+          "--orders",
+          listingOrdersForSegment(category.segment).join(","),
+        );
+      }
+
+      console.log(
+        `Scraping Auctionet (${options.mode}; skips existing bucket objects)...`,
+      );
+      const scrapeResult = await runScript(
+        "scripts/scrape-auctionet.ts",
+        scrapeArgs,
+        options.dryRun,
+      );
+      if (scrapeResult.code !== 0) {
+        throw new Error(`scrape:auctionet exited with code ${scrapeResult.code}`);
+      }
+      scrapedSaved = parseScrapeSaved(scrapeResult.output);
     }
   }
 
   if (options.skipEmbed && options.skipSeed) {
     console.log("Skipping bucket → local sync (embed and seed both skipped)");
-    return;
+    return scrapedSaved;
   }
 
   const { syncCatalogPrefixDown, syncVectorsDirUp } =
@@ -374,13 +453,15 @@ async function runCategory(category: CatalogCategory, options: CliOptions) {
     }
 
     console.log("Embedding images (skips existing Vector Artifacts)...");
-    const embedCode = await runScript(
+    const embedResult = await runScript(
       "scripts/embed-auctionet-vectors.ts",
       embedArgs,
       false,
     );
-    if (embedCode !== 0) {
-      throw new Error(`embed:auctionet-vectors exited with code ${embedCode}`);
+    if (embedResult.code !== 0) {
+      throw new Error(
+        `embed:auctionet-vectors exited with code ${embedResult.code}`,
+      );
     }
   }
 
@@ -404,36 +485,98 @@ async function runCategory(category: CatalogCategory, options: CliOptions) {
     }
 
     console.log("Seeding Qdrant (skips artifacts whose points already exist)...");
-    const seedCode = await runScript(
+    const seedResult = await runScript(
       "scripts/seed-references.ts",
       seedArgs,
       false,
     );
-    if (seedCode !== 0) {
-      throw new Error(`seed:references exited with code ${seedCode}`);
+    if (seedResult.code !== 0) {
+      throw new Error(`seed:references exited with code ${seedResult.code}`);
     }
   }
 
   console.log(
     `bucket vectors prefix: ${categoryVectorsBucketPrefix(category.segment)}`,
   );
+
+  return scrapedSaved;
 }
 
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
+  const parsed = parseArgs(process.argv.slice(2));
+
+  let categories: CatalogCategory[];
+  if (parsed.discoverLeaves) {
+    console.log(
+      `Discovering leaf categories for company_id=${parsed.companyId}...`,
+    );
+    categories = parsed.dryRun
+      ? parseCatalogCategories(undefined)
+      : await discoverCompanyLeafCategories({
+          companyId: parsed.companyId,
+          delayMs: 400,
+        });
+    console.log(
+      `Discovered ${categories.length} leaves: ${categories
+        .map((category) => category.segment)
+        .join(", ")}`,
+    );
+  } else if (parsed.categoryArgs.length > 0) {
+    categories = parseCatalogCategories(parsed.categoryArgs.join(","));
+  } else {
+    categories = parseCatalogCategories(process.env.CATALOG_CATEGORIES);
+  }
+
+  const options: CliOptions = {
+    categories,
+    dryRun: parsed.dryRun,
+    skipScrape: parsed.skipScrape,
+    skipEmbed: parsed.skipEmbed,
+    skipSeed: parsed.skipSeed,
+    maxPages: parsed.maxPages,
+    maxItems: parsed.maxItems,
+    mode: parsed.mode,
+    discoverLeaves: parsed.discoverLeaves,
+    companyId: parsed.companyId,
+  };
 
   if (options.categories.length === 0) {
     throw new Error("No Auctionet Categories configured");
   }
 
   console.log(
-    `Catalog pipeline starting for ${options.categories
+    `Catalog pipeline (${options.mode}) starting for ${options.categories
       .map((category) => category.segment)
       .join(", ")}`,
   );
 
+  let scrapeBudget = options.maxItems;
+  let totalSaved = 0;
+
   for (const category of options.categories) {
-    await runCategory(category, options);
+    if (
+      !options.skipScrape &&
+      scrapeBudget === 0 &&
+      options.skipEmbed &&
+      options.skipSeed
+    ) {
+      console.log(
+        `\nScrape --max-items budget exhausted after ${totalSaved} new items; stopping`,
+      );
+      break;
+    }
+
+    const saved = await runCategory(category, options, scrapeBudget);
+    totalSaved += saved;
+    if (scrapeBudget !== null) {
+      scrapeBudget = Math.max(0, scrapeBudget - saved);
+    }
+  }
+
+  if (options.maxItems !== null && !options.skipScrape) {
+    console.log(
+      `\nScrape saved ${totalSaved} new items (budget ${options.maxItems})`,
+    );
   }
 
   console.log("\nCatalog pipeline finished");
