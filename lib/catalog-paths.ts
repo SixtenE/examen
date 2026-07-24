@@ -1,6 +1,6 @@
 import path from "node:path";
 
-export const CATALOG_BUCKET_PREFIX = "catalog/auctionet/items";
+export const CATALOG_BUCKET_PREFIX = "scrape";
 export const LOCAL_CATALOG_ROOT = "data/auctionet/items";
 export const CATEGORY_SEGMENT_PATTERN = /^\d+-[a-z0-9-]+$/;
 export const MAX_REFERENCES_PER_ITEM = 100;

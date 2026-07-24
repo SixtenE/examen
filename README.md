@@ -127,7 +127,7 @@ CATALOG_CATEGORIES=9-ceramics-porcelain,28-paintings
 # CATALOG_CATEGORIES=28-paintings|https://auctionet.com/en/search/28-paintings?is=ended
 ```
 
-Bucket keys live under `catalog/auctionet/items/...` so they never collide with Query image Keys. See [ADR 0008](./docs/adr/0008-daily-catalog-pipeline-on-railway.md).
+Bucket keys live under `scrape/...` so they never collide with Query image Keys. See [ADR 0008](./docs/adr/0008-daily-catalog-pipeline-on-railway.md).
 
 ## Project documentation
 

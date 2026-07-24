@@ -27,7 +27,7 @@ describe("catalog-paths", () => {
       "data/auctionet/items/28-paintings/vectors",
     );
     expect(categoryBucketPrefix("28-paintings")).toBe(
-      "catalog/auctionet/items/28-paintings",
+      "scrape/28-paintings",
     );
   });
 
@@ -37,7 +37,7 @@ describe("catalog-paths", () => {
     const key = localPathToBucketKey(localPath);
 
     expect(key).toBe(
-      "catalog/auctionet/items/9-ceramics-porcelain/123/123456.json",
+      "scrape/9-ceramics-porcelain/123/123456.json",
     );
     expect(bucketKeyToLocalPath(key)).toBe(localPath);
   });
