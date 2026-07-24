@@ -47,6 +47,28 @@ export function categoryVectorsBucketPrefix(segment: string) {
   return `${categoryBucketPrefix(segment)}/vectors`;
 }
 
+/** Auctionet Category segment from a listing URL path (`/…/search/{segment}`). */
+export function categorySegmentFromSearchUrl(url: URL | string) {
+  const parsed = typeof url === "string" ? new URL(url) : url;
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  const searchIndex = parts.indexOf("search");
+
+  if (searchIndex === -1 || searchIndex === parts.length - 1) {
+    throw new Error(
+      `Auctionet search URL is missing a category segment: ${parsed.toString()}`,
+    );
+  }
+
+  return assertCategorySegment(parts[searchIndex + 1]);
+}
+
+/** Durable bucket key for one scraped Auctionet Item JSON. */
+export function itemBucketKey(segment: string, auctionetId: number) {
+  const filename = `${auctionetId}.json`;
+  const folder = filename.slice(0, 3);
+  return `${categoryBucketPrefix(segment)}/${folder}/${filename}`;
+}
+
 /** Maps a local catalog file to its durable bucket key. */
 export function localPathToBucketKey(localPath: string, localRoot = LOCAL_CATALOG_ROOT) {
   const absoluteLocal = path.resolve(localPath);

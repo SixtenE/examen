@@ -82,12 +82,14 @@ AWS_BUCKET_NAME=...
 ## Build the searchable catalog
 
 ```bash
-# 1. Scrape sold Auctionet items (per category)
+# 1. Scrape sold Auctionet items into the Railway bucket (segment from URL)
 pnpm scrape:auctionet -- \
-  --url "https://auctionet.com/en/search/9-ceramics-porcelain?is=ended" \
-  --out data/auctionet/items/9-ceramics-porcelain
+  --url "https://auctionet.com/en/search/9-ceramics-porcelain?is=ended"
 
-# 2. Generate image embeddings (vectors live inside the category folder)
+# 2. Sync items locally (or use catalog:pipeline), then embed
+pnpm catalog:pipeline -- --skip-scrape --category 9-ceramics-porcelain
+
+# Or manually after downloading item JSON under data/auctionet/items/…:
 pnpm embed:auctionet-vectors -- \
   --items data/auctionet/items/9-ceramics-porcelain \
   --out data/auctionet/items/9-ceramics-porcelain/vectors
@@ -98,27 +100,32 @@ pnpm seed:references -- \
   --items data/auctionet/items/9-ceramics-porcelain
 ```
 
-The pipeline writes resumable JSON artifacts to `data/auctionet/`, making each stage independently inspectable and repeatable.
+Scrape writes only to the bucket. Embed/seed still read local JSON under `data/auctionet/`.
 
 ### Daily automation on Railway
 
 `pnpm catalog:pipeline` runs the full loop for each configured Auctionet Category:
 
-1. Sync Auctionet Item JSON down from the Railway Bucket (skip files already local)
-2. Scrape (skip item JSON that already exists)
-3. Upload new item JSON to the bucket (`HeadObject` skip)
-4. Reuse Vector Artifacts already in Qdrant or the bucket; embed only the rest
-5. Upload new Vector Artifacts to the bucket (`HeadObject` skip)
-6. Seed Qdrant (skip artifacts whose deterministic point IDs already exist)
+1. Scrape (skip existing bucket objects via `HeadObject`)
+2. Sync Auctionet Item JSON down from the Railway Bucket (for embed/seed)
+3. Reuse Vector Artifacts already in Qdrant or the bucket; embed only the rest
+4. Upload new Vector Artifacts to the bucket (`HeadObject` skip)
+5. Seed Qdrant (skip artifacts whose deterministic point IDs already exist)
 
-Create a **separate** Railway service for the cron (do not put the cron schedule on the web app). Point that service at `railway.catalog.toml` as its config-as-code file. It runs daily at 03:00 UTC.
+Create **separate** Railway services for cron (do not put schedules on the web app):
+
+- Scrape-only: point at `railway.scrape.toml` — daily 02:00 UTC, bucket + `CATALOG_CATEGORIES` only
+- Full pipeline: point at `railway.catalog.toml` — daily 03:00 UTC
 
 ```bash
 # Local dry run of the orchestrator
 pnpm catalog:pipeline -- --dry-run --max-pages 1 --max-items 5
+
+# Scrape-only (same as railway.scrape.toml)
+pnpm catalog:pipeline -- --skip-embed --skip-seed
 ```
 
-Extra env for the cron service (in addition to the app vars):
+Extra env for the cron services (in addition to the app vars; full pipeline also needs OpenRouter/Qdrant):
 
 ```bash
 AWS_ENDPOINT_URL=https://storage.railway.app   # from the Railway Bucket credentials

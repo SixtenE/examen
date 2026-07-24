@@ -4,9 +4,11 @@ import {
   bucketKeyToLocalPath,
   categoryBucketPrefix,
   categoryItemsDir,
+  categorySegmentFromSearchUrl,
   categoryVectorsDir,
   expectedPointIds,
   getPointId,
+  itemBucketKey,
   localPathToBucketKey,
   parseCatalogCategories,
 } from "@/lib/catalog-paths";
@@ -28,6 +30,23 @@ describe("catalog-paths", () => {
     );
     expect(categoryBucketPrefix("28-paintings")).toBe(
       "scrape/28-paintings",
+    );
+  });
+
+  it("derives category segment from search URL", () => {
+    expect(
+      categorySegmentFromSearchUrl(
+        "https://auctionet.com/en/search/9-ceramics-porcelain?is=ended",
+      ),
+    ).toBe("9-ceramics-porcelain");
+    expect(() =>
+      categorySegmentFromSearchUrl("https://auctionet.com/en/items/1"),
+    ).toThrow(/missing a category segment/);
+  });
+
+  it("builds item bucket keys", () => {
+    expect(itemBucketKey("9-ceramics-porcelain", 123456)).toBe(
+      "scrape/9-ceramics-porcelain/123/123456.json",
     );
   });
 

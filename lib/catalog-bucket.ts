@@ -122,27 +122,35 @@ export async function downloadCatalogObject(key: string, localPath: string) {
   await writeFile(localPath, bytes);
 }
 
-export async function uploadCatalogObject(
-  localPath: string,
+export async function putCatalogObject(
   key: string,
-  options: { skipExisting?: boolean } = {},
+  body: string | Buffer | Uint8Array,
+  options: { skipExisting?: boolean; contentType?: string } = {},
 ) {
   if (options.skipExisting !== false && (await catalogObjectExists(key))) {
     return { uploaded: false, skipped: true };
   }
 
   const s3Client = await getS3Client();
-  const body = await readFile(localPath);
   await s3Client.send(
     new PutObjectCommand({
       Bucket: requireBucketName(),
       Key: key,
       Body: body,
-      ContentType: "application/json",
+      ContentType: options.contentType ?? "application/json",
     }),
   );
 
   return { uploaded: true, skipped: false };
+}
+
+export async function uploadCatalogObject(
+  localPath: string,
+  key: string,
+  options: { skipExisting?: boolean } = {},
+) {
+  const body = await readFile(localPath);
+  return putCatalogObject(key, body, options);
 }
 
 async function discoverLocalFiles(dir: string): Promise<string[]> {

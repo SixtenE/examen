@@ -7,25 +7,21 @@ import {
   normalizeAuctionetUrl,
   stripHtmlTags,
 } from "../lib/auctionet";
-import { constants } from "node:fs";
-import { access, mkdir, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { catalogObjectExists, putCatalogObject } from "../lib/catalog-bucket";
+import {
+  categorySegmentFromSearchUrl,
+  itemBucketKey,
+} from "../lib/catalog-paths";
 import { setTimeout as sleep } from "node:timers/promises";
 
 type CliOptions = {
   url: URL;
-  outDir: string;
+  segment: string;
   force: boolean;
   delayMs: number;
   concurrency: number;
   maxPages: number | null;
   maxItems: number | null;
-};
-
-type ListingPageResult = {
-  url: string;
-  item_count: number;
-  next_url: string | null;
 };
 
 type CrawlFailure = {
@@ -34,13 +30,7 @@ type CrawlFailure = {
   reason: string;
 };
 
-type RunManifest = {
-  start_url: string;
-  item_output_dir: string;
-  run_output_dir: string;
-  started_at: string;
-  ended_at: string | null;
-  listing_pages: ListingPageResult[];
+type CrawlStats = {
   discovered_item_count: number;
   saved_item_count: number;
   skipped_item_count: number;
@@ -80,11 +70,13 @@ const DEFAULT_CONCURRENCY = 2;
 
 function usage() {
   return [
-    "Usage: pnpm scrape:auctionet -- --url <auctionet-category-url> --out <dir> [options]",
+    "Usage: pnpm scrape:auctionet -- --url <auctionet-category-url> [options]",
+    "",
+    "Writes Auctionet Item JSON to the Railway bucket under scrape/{segment}/…",
+    "Category segment is taken from the URL path (/…/search/{segment}).",
     "",
     "Options:",
-    "  --out <dir>           Directory for per-item JSON files (required)",
-    "  --force               Re-fetch and overwrite existing item JSON files",
+    "  --force               Re-fetch and overwrite existing bucket objects",
     `  --delay-ms <ms>       Delay after each item fetch (default: ${DEFAULT_DELAY_MS})`,
     `  --concurrency <n>     Item page fetch concurrency (default: ${DEFAULT_CONCURRENCY})`,
     "  --max-pages <n>       Stop listing pagination after n pages",
@@ -124,7 +116,6 @@ function readOptionValue(args: string[], index: number, name: string) {
 
 function parseArgs(args: string[]): CliOptions {
   let url: URL | null = null;
-  let outDir: string | null = null;
   let force = false;
   let delayMs = DEFAULT_DELAY_MS;
   let concurrency = DEFAULT_CONCURRENCY;
@@ -139,10 +130,6 @@ function parseArgs(args: string[]): CliOptions {
         break;
       case "--url":
         url = normalizeAuctionetUrl(readOptionValue(args, index, arg), "url");
-        index += 1;
-        break;
-      case "--out":
-        outDir = readOptionValue(args, index, arg);
         index += 1;
         break;
       case "--force":
@@ -183,13 +170,9 @@ function parseArgs(args: string[]): CliOptions {
     throw new Error("Missing required option: --url");
   }
 
-  if (!outDir) {
-    throw new Error("Missing required option: --out");
-  }
-
   return {
     url,
-    outDir,
+    segment: categorySegmentFromSearchUrl(url),
     force,
     delayMs,
     concurrency,
@@ -656,32 +639,6 @@ function isAllowedListingPage(nextUrl: URL, startUrl: URL) {
   );
 }
 
-function timestampForFilename(date: Date) {
-  return date.toISOString().replaceAll(":", "-").replaceAll(".", "-");
-}
-
-function getAuctionetItemFilePath(outDir: string, auctionetId: number) {
-  const filename = `${auctionetId}.json`;
-  const folder = filename.slice(0, 3);
-
-  return path.join(outDir, folder, filename);
-}
-
-async function fileExists(filePath: string) {
-  try {
-    await access(filePath, constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function writeJsonFile(filePath: string, value: unknown) {
-  const tmpPath = `${filePath}.tmp`;
-  await writeFile(tmpPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(tmpPath, filePath);
-}
-
 function formatDuration(ms: number) {
   const totalSeconds = Math.round(ms / 1000);
   const hours = Math.floor(totalSeconds / 3600);
@@ -730,24 +687,24 @@ async function scrapeItem(
   auctionetId: number,
   itemUrl: URL,
   options: CliOptions,
-  manifest: RunManifest,
+  stats: CrawlStats,
 ) {
-  const filePath = getAuctionetItemFilePath(options.outDir, auctionetId);
-  const destinationDir = path.dirname(filePath);
+  const key = itemBucketKey(options.segment, auctionetId);
 
-  if (!options.force && (await fileExists(filePath))) {
-    manifest.skipped_item_count += 1;
+  if (!options.force && (await catalogObjectExists(key))) {
+    stats.skipped_item_count += 1;
     return;
   }
 
   try {
     const html = await fetchAuctionetHtml(itemUrl);
     const item = extractAuctionetItemJson(html, itemUrl, auctionetId);
-    await mkdir(destinationDir, { recursive: true });
-    await writeJsonFile(filePath, item);
-    manifest.saved_item_count += 1;
+    await putCatalogObject(key, `${JSON.stringify(item, null, 2)}\n`, {
+      skipExisting: false,
+    });
+    stats.saved_item_count += 1;
   } catch (error) {
-    manifest.failures.push({
+    stats.failures.push({
       url: itemUrl.toString(),
       auctionet_id: auctionetId,
       reason: error instanceof Error ? error.message : String(error),
@@ -763,7 +720,7 @@ async function scrapePageItems(
   entries: [number, URL][],
   pageNumber: number,
   options: CliOptions,
-  manifest: RunManifest,
+  stats: CrawlStats,
 ) {
   if (entries.length === 0) {
     console.log(`Page ${pageNumber}: 0/0 (100%), elapsed 0s, ETA 0s`);
@@ -778,7 +735,7 @@ async function scrapePageItems(
       const entry = entries[nextIndex];
       nextIndex += 1;
       const startedAt = performance.now();
-      await scrapeItem(entry[0], entry[1], options, manifest);
+      await scrapeItem(entry[0], entry[1], options, stats);
       progress.record(performance.now() - startedAt);
       console.log(progress.report());
     }
@@ -792,7 +749,7 @@ async function scrapePageItems(
   );
 }
 
-async function crawlAuctionet(options: CliOptions, manifest: RunManifest) {
+async function crawlAuctionet(options: CliOptions, stats: CrawlStats) {
   const seenAuctionetIds = new Set<number>();
   const visitedListingUrls = new Set<string>();
   let listingUrl: URL | null = options.url;
@@ -827,7 +784,7 @@ async function crawlAuctionet(options: CliOptions, manifest: RunManifest) {
 
       seenAuctionetIds.add(auctionetId);
       pageEntries.push([auctionetId, itemUrl]);
-      manifest.discovered_item_count = seenAuctionetIds.size;
+      stats.discovered_item_count = seenAuctionetIds.size;
 
       if (options.maxItems && seenAuctionetIds.size >= options.maxItems) {
         hitMaxItems = true;
@@ -839,13 +796,7 @@ async function crawlAuctionet(options: CliOptions, manifest: RunManifest) {
     const allowedNextUrl =
       nextUrl && isAllowedListingPage(nextUrl, options.url) ? nextUrl : null;
 
-    manifest.listing_pages.push({
-      url: listingUrlKey,
-      item_count: discovered.length,
-      next_url: allowedNextUrl?.toString() ?? null,
-    });
-
-    await scrapePageItems(pageEntries, pageNumber, options, manifest);
+    await scrapePageItems(pageEntries, pageNumber, options, stats);
 
     if (hitMaxItems) {
       break;
@@ -857,25 +808,11 @@ async function crawlAuctionet(options: CliOptions, manifest: RunManifest) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  options.outDir = path.resolve(options.outDir);
+  console.log(
+    `Scraping ${options.segment} → bucket prefix scrape/${options.segment}/`,
+  );
 
-  const runStartedAt = new Date();
-  const corpusDir = path.dirname(options.outDir);
-  const runOutputDir = path.join(corpusDir, "runs");
-  const runId = timestampForFilename(runStartedAt);
-  const manifestPath = path.join(runOutputDir, `${runId}.json`);
-  const retryPath = path.join(runOutputDir, `${runId}-retry.json`);
-
-  await mkdir(options.outDir, { recursive: true });
-  await mkdir(runOutputDir, { recursive: true });
-
-  const manifest: RunManifest = {
-    start_url: options.url.toString(),
-    item_output_dir: options.outDir,
-    run_output_dir: runOutputDir,
-    started_at: runStartedAt.toISOString(),
-    ended_at: null,
-    listing_pages: [],
+  const stats: CrawlStats = {
     discovered_item_count: 0,
     saved_item_count: 0,
     skipped_item_count: 0,
@@ -883,28 +820,20 @@ async function main() {
     failures: [],
   };
 
-  try {
-    await crawlAuctionet(options, manifest);
-    console.log(`Discovered ${manifest.discovered_item_count} Auctionet Items`);
-  } finally {
-    manifest.ended_at = new Date().toISOString();
-    manifest.failed_item_count = manifest.failures.length;
-    await writeJsonFile(manifestPath, manifest);
+  await crawlAuctionet(options, stats);
+  stats.failed_item_count = stats.failures.length;
 
-    if (manifest.failures.length > 0) {
-      await writeJsonFile(retryPath, {
-        start_url: manifest.start_url,
-        created_at: manifest.ended_at,
-        failures: manifest.failures,
-      });
-    }
-  }
-
+  console.log(`Discovered ${stats.discovered_item_count} Auctionet Items`);
   console.log(
-    `Saved ${manifest.saved_item_count}, skipped ${manifest.skipped_item_count}, failed ${manifest.failed_item_count}`,
+    `Saved ${stats.saved_item_count}, skipped ${stats.skipped_item_count}, failed ${stats.failed_item_count}`,
   );
 
-  if (manifest.failed_item_count > 0) {
+  if (stats.failed_item_count > 0) {
+    for (const failure of stats.failures) {
+      console.error(
+        `failed ${failure.auctionet_id ?? "?"}: ${failure.reason} (${failure.url})`,
+      );
+    }
     process.exitCode = 1;
   }
 }

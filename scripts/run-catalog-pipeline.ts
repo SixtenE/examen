@@ -36,7 +36,7 @@ function usage() {
     "Usage: pnpm catalog:pipeline -- [options]",
     "",
     "Daily catalog pipeline: scrape → Railway bucket → embed → Qdrant.",
-    "Duplicate checks: local item files, bucket HeadObject, vector files, Qdrant point IDs.",
+    "Duplicate checks: bucket HeadObject (scrape), local/vector files, Qdrant point IDs.",
     "",
     "Options:",
     "  --category <segment|url>   Category segment, or segment|url (repeatable)",
@@ -310,27 +310,14 @@ async function prepareVectors(category: CatalogCategory, dryRun: boolean) {
 }
 
 async function runCategory(category: CatalogCategory, options: CliOptions) {
-  const { syncCatalogDirUp, syncCatalogPrefixDown, syncVectorsDirUp } =
-    await import("../lib/catalog-bucket");
   const itemsDir = categoryItemsDir(category.segment);
   const vectorsDir = categoryVectorsDir(category.segment);
   const itemsPrefix = categoryBucketPrefix(category.segment);
 
   console.log(`\n=== ${category.segment} ===`);
-  await mkdir(itemsDir, { recursive: true });
-
-  console.log("Syncing Auctionet Item JSON from bucket (skip existing local)...");
-  if (options.dryRun) {
-    console.log(`dry-run sync down: ${itemsPrefix}`);
-  } else {
-    const down = await syncCatalogPrefixDown({ prefix: itemsPrefix });
-    console.log(
-      `bucket → local items: downloaded ${down.downloaded}, skipped ${down.skipped}`,
-    );
-  }
 
   if (!options.skipScrape) {
-    const scrapeArgs = ["--url", category.url, "--out", itemsDir];
+    const scrapeArgs = ["--url", category.url];
     if (options.maxPages !== null) {
       scrapeArgs.push("--max-pages", String(options.maxPages));
     }
@@ -338,7 +325,7 @@ async function runCategory(category: CatalogCategory, options: CliOptions) {
       scrapeArgs.push("--max-items", String(options.maxItems));
     }
 
-    console.log("Scraping Auctionet (skips existing item JSON)...");
+    console.log("Scraping Auctionet (skips existing bucket objects)...");
     const scrapeCode = await runScript(
       "scripts/scrape-auctionet.ts",
       scrapeArgs,
@@ -349,13 +336,23 @@ async function runCategory(category: CatalogCategory, options: CliOptions) {
     }
   }
 
-  console.log("Uploading Auctionet Item JSON to bucket (skip existing remote)...");
+  if (options.skipEmbed && options.skipSeed) {
+    console.log("Skipping bucket → local sync (embed and seed both skipped)");
+    return;
+  }
+
+  const { syncCatalogPrefixDown, syncVectorsDirUp } =
+    await import("../lib/catalog-bucket");
+
+  await mkdir(itemsDir, { recursive: true });
+
+  console.log("Syncing Auctionet Item JSON from bucket (skip existing local)...");
   if (options.dryRun) {
-    console.log(`dry-run sync up items: ${itemsDir}`);
+    console.log(`dry-run sync down: ${itemsPrefix}`);
   } else {
-    const up = await syncCatalogDirUp({ localDir: itemsDir });
+    const down = await syncCatalogPrefixDown({ prefix: itemsPrefix });
     console.log(
-      `local → bucket items: uploaded ${up.uploaded}, skipped ${up.skipped}`,
+      `bucket → local items: downloaded ${down.downloaded}, skipped ${down.skipped}`,
     );
   }
 
