@@ -4,7 +4,7 @@ status: accepted
 
 # Federated category collections in Qdrant
 
-Each Auctionet Category is seeded into its own Qdrant collection named `references-{auctionet-category-id}-{slug}` (for example `references-9-ceramics-porcelain`). Match generation searches every collection on a fixed allow-list, fetches 128 candidate points from each, merges by similarity score, deduplicates by Auctionet Item (keeping the highest-scoring Reference image per item), and returns the global top 32 Matches. All collections must share the same embedding model, dimensions, and distance metric; any collection that fails to search fails the entire generation so rankings stay complete and reproducible.
+Each Auctionet Category is seeded into its own Qdrant collection named `references-{auctionet-category-id}-{slug}` (for example `references-9-ceramics-porcelain`). Match generation searches every collection on a fixed allow-list, fetches 128 candidate points from each, merges candidates, deduplicates by Auctionet Item (keeping the highest-scoring Reference image per item), and returns the global top 32 Matches ranked by similarity × sale recency (see ADR 0008). All collections must share the same embedding model, dimensions, and distance metric; any collection that fails to search fails the entire generation so rankings stay complete and reproducible.
 
 ## Considered Options
 
