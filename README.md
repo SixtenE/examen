@@ -114,7 +114,7 @@ Scrape writes only to the bucket. Embed/seed still read local JSON under `data/a
 
 Create **separate** Railway services for cron (do not put schedules on the web app):
 
-- Scrape-only: point at `railway.scrape.toml` — daily 02:00 UTC, bucket + `CATALOG_CATEGORIES` only
+- Scrape-only: point at `railway.scrape.toml` — every 30 minutes, bucket + `CATALOG_CATEGORIES` only
 - Full pipeline: point at `railway.catalog.toml` — daily 03:00 UTC
 
 ```bash
