@@ -1,5 +1,3 @@
-import "server-only";
-
 import { trace, SpanStatusCode, type Attributes } from "@opentelemetry/api";
 import {
   logs,
@@ -20,7 +18,7 @@ export type TelemetryProperties = Record<
 type RequestErrorInfo = {
   path: string;
   method: string;
-  headers: Record<string, string | string[]>;
+  headers: Record<string, string | string[] | undefined>;
 };
 
 type RequestErrorContext = {
@@ -63,7 +61,7 @@ function compact(properties: TelemetryProperties) {
 }
 
 function getHeader(
-  headers: Headers | Record<string, string | string[]>,
+  headers: Headers | Record<string, string | string[] | undefined>,
   name: string,
 ) {
   if (headers instanceof Headers) return headers.get(name) ?? undefined;
