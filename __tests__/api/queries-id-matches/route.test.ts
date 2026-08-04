@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 import { createDbMock } from "../../helpers/mock-db";
 
 const QUERY_ID = "550e8400-e29b-41d4-a716-446655440000";
+const OWNER_ID = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
 const params = Promise.resolve({ id: QUERY_ID });
 
-const mockGetSignedUrl = vi.fn().mockResolvedValue("https://signed.example/image");
+const mockGetSignedUrl = vi
+  .fn()
+  .mockResolvedValue("https://signed.example/image");
 const mockEmbedImageUrl = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
 const mockSearch = vi.fn();
 
@@ -12,7 +16,21 @@ const NOW_UNIX = Math.floor(new Date("2026-07-24T12:00:00Z").getTime() / 1000);
 const MONTH_AGO_UNIX = NOW_UNIX - 30 * 86_400;
 const FIVE_YEARS_AGO_UNIX = NOW_UNIX - 5 * 365 * 86_400;
 
-function hit(auctionetId: string, score: number, soldAt: number | null = MONTH_AGO_UNIX) {
+function makeRequest(method = "GET") {
+  return new NextRequest(
+    `http://localhost:3000/api/queries/${QUERY_ID}/matches`,
+    {
+      method,
+      headers: { cookie: `examen-owner=${OWNER_ID}` },
+    },
+  );
+}
+
+function hit(
+  auctionetId: string,
+  score: number,
+  soldAt: number | null = MONTH_AGO_UNIX,
+) {
   return {
     score,
     payload: {
@@ -111,7 +129,7 @@ describe("GET /api/queries/[id]/matches", () => {
     vi.setSystemTime(new Date("2026-07-24T12:00:00Z"));
 
     const { GET } = await import("@/app/api/queries/[id]/matches/route");
-    const response = await GET({} as Request, { params });
+    const response = await GET(makeRequest(), { params });
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -124,7 +142,7 @@ describe("GET /api/queries/[id]/matches", () => {
 
   it("returns 404 for invalid UUIDs", async () => {
     const { GET } = await import("@/app/api/queries/[id]/matches/route");
-    const response = await GET({} as Request, {
+    const response = await GET(makeRequest(), {
       params: Promise.resolve({ id: "invalid" }),
     });
 
@@ -138,7 +156,7 @@ describe("GET /api/queries/[id]/matches", () => {
     });
 
     const { GET } = await import("@/app/api/queries/[id]/matches/route");
-    const response = await GET({} as Request, { params });
+    const response = await GET(makeRequest(), { params });
     expect(response.status).toBe(404);
   });
 });
@@ -153,7 +171,10 @@ describe("POST /api/queries/[id]/matches", () => {
           hit("shared-item", 0.95, MONTH_AGO_UNIX),
           hit("shared-item", 0.8, MONTH_AGO_UNIX),
           ...Array.from({ length: 20 }, (_, index) =>
-            hit(`item-${String(index + 2).padStart(3, "0")}`, 0.94 - index * 0.01),
+            hit(
+              `item-${String(index + 2).padStart(3, "0")}`,
+              0.94 - index * 0.01,
+            ),
           ),
         ]);
       }
@@ -162,7 +183,10 @@ describe("POST /api/queries/[id]/matches", () => {
         return Promise.resolve([
           hit("shared-item", 0.85, MONTH_AGO_UNIX),
           ...Array.from({ length: 25 }, (_, index) =>
-            hit(`item-${String(index + 22).padStart(3, "0")}`, 0.74 - index * 0.01),
+            hit(
+              `item-${String(index + 22).padStart(3, "0")}`,
+              0.74 - index * 0.01,
+            ),
           ),
         ]);
       }
@@ -227,7 +251,7 @@ describe("POST /api/queries/[id]/matches", () => {
     vi.setSystemTime(new Date("2026-07-24T12:00:00Z"));
 
     const { POST } = await import("@/app/api/queries/[id]/matches/route");
-    const response = await POST({} as Request, { params });
+    const response = await POST(makeRequest("POST"), { params });
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -243,9 +267,11 @@ describe("POST /api/queries/[id]/matches", () => {
     expect(body).toHaveLength(32);
     expect(body[0].auctionet_id).toBe("shared-item");
     expect(body[0].similarity_score).toBe(0.95);
-    expect(body.some((row: { auctionet_id: string }) => row.auctionet_id === "item-046")).toBe(
-      false,
-    );
+    expect(
+      body.some(
+        (row: { auctionet_id: string }) => row.auctionet_id === "item-046",
+      ),
+    ).toBe(false);
   });
 
   it("ranks a recent mid score above an old high score", async () => {
@@ -268,7 +294,7 @@ describe("POST /api/queries/[id]/matches", () => {
     });
 
     const { POST } = await import("@/app/api/queries/[id]/matches/route");
-    const response = await POST({} as Request, { params });
+    const response = await POST(makeRequest("POST"), { params });
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -277,5 +303,22 @@ describe("POST /api/queries/[id]/matches", () => {
     expect(body[0].similarity_score).toBe(0.85);
     expect(body[1].auctionet_id).toBe("old-high");
     expect(body[1].similarity_score).toBe(0.92);
+  });
+
+  it("does not regenerate matches for a ready query", async () => {
+    vi.doMock("@/db", () => {
+      const mockDb = createDbMock({
+        updateReturning: [],
+        selectResults: [[{ id: QUERY_ID, status: "ready" }]],
+      });
+      return { db: mockDb.db };
+    });
+
+    const { POST } = await import("@/app/api/queries/[id]/matches/route");
+    const response = await POST(makeRequest("POST"), { params });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: "ready" });
+    expect(mockSearch).not.toHaveBeenCalled();
   });
 });

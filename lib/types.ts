@@ -3,7 +3,6 @@ export type QueryStatus = "pending" | "processing" | "ready" | "failed";
 export type QueryListItem = {
   id: string;
   title: string;
-  image_key: string;
   status: QueryStatus;
   createdAt: string;
 };

@@ -6,10 +6,11 @@ import { qdrantClient } from "@/lib/qdrant";
 import { s3Client } from "@/lib/s3";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { isUuid } from "@/lib/utils";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { getQueryOwnerId } from "@/lib/query-owner";
 
 const REFERENCE_COLLECTIONS = [
   "references-28-paintings",
@@ -63,7 +64,15 @@ export async function GET(
   }
 
   try {
-    const [query] = await db.select().from(queries).where(eq(queries.id, id));
+    const ownerId = getQueryOwnerId(request);
+    if (!ownerId) {
+      return Response.json({ error: "Query not found" }, { status: 404 });
+    }
+
+    const [query] = await db
+      .select({ id: queries.id })
+      .from(queries)
+      .where(and(eq(queries.id, id), eq(queries.owner_id, ownerId)));
 
     if (!query) {
       return Response.json({ error: "Query not found" }, { status: 404 });
@@ -98,6 +107,7 @@ export async function POST(
 ) {
   const rateLimitResponse = await enforceRateLimit(request, {
     scope: "api:queries:id:matches:post",
+    failClosed: true,
   });
   if (rateLimitResponse) {
     return rateLimitResponse;
@@ -109,27 +119,37 @@ export async function POST(
     return Response.json({ error: "Query not found" }, { status: 404 });
   }
 
+  const ownerId = getQueryOwnerId(request);
+  if (!ownerId) {
+    return Response.json({ error: "Query not found" }, { status: 404 });
+  }
+
   try {
-    // Atomically claim the query for generation: only one caller can flip a
-    // non-processing query to "processing", so concurrent loads can't both run
-    // the (expensive) embed + search.
+    // Atomically claim new or failed work so ready queries cannot be charged
+    // through the embedding API again.
     const [claimed] = await db
       .update(queries)
       .set({ status: "processing" })
-      .where(and(eq(queries.id, id), ne(queries.status, "processing")))
+      .where(
+        and(
+          eq(queries.id, id),
+          eq(queries.owner_id, ownerId),
+          inArray(queries.status, ["pending", "failed"]),
+        ),
+      )
       .returning();
 
     if (!claimed) {
       const [existing] = await db
         .select()
         .from(queries)
-        .where(eq(queries.id, id));
+        .where(and(eq(queries.id, id), eq(queries.owner_id, ownerId)));
 
       if (!existing) {
         return Response.json({ error: "Query not found" }, { status: 404 });
       }
 
-      return Response.json({ status: "processing" });
+      return Response.json({ status: existing.status });
     }
 
     const query = claimed;
@@ -213,16 +233,11 @@ export async function POST(
       await db
         .update(queries)
         .set({ status: "failed" })
-        .where(eq(queries.id, id));
+        .where(and(eq(queries.id, id), eq(queries.owner_id, ownerId)));
     } catch (statusError) {
       console.error("matches route status update error:", statusError);
     }
 
-    return Response.json(
-      {
-        error: error instanceof Error ? error.message : "Internal server error",
-      },
-      { status: 500 },
-    );
+    return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }

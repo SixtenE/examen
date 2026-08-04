@@ -22,7 +22,6 @@ const formSchema = z.object({
 
 type UploadImageResult = {
   id: string;
-  key: string;
 };
 
 type UploadVariables = {
@@ -194,7 +193,8 @@ function UploadFormCard() {
                     asChild
                     className={cn(
                       "w-full min-w-0 truncate rounded-2xl py-6 font-semibold",
-                      uploadMutation.isPending && "pointer-events-none opacity-50",
+                      uploadMutation.isPending &&
+                        "pointer-events-none opacity-50",
                     )}
                   >
                     <label

@@ -18,12 +18,14 @@ return { count, ttl }
 
 type RateLimitOptions = {
   scope: string;
+  failClosed?: boolean;
   limit?: number;
   windowSeconds?: number;
 };
 
 type RateLimitResult = {
   allowed: boolean;
+  available: boolean;
   limit: number;
   remaining: number;
   resetAt: Date;
@@ -86,7 +88,7 @@ function getRequestIdentifier(request: Request) {
   const headers = request.headers ?? new Headers();
   const forwardedFor = headers.get("x-forwarded-for");
   const ip =
-    forwardedFor?.split(",").at(0)?.trim() ||
+    forwardedFor?.split(",").at(-1)?.trim() ||
     headers.get("x-real-ip") ||
     headers.get("cf-connecting-ip") ||
     "anonymous";
@@ -111,11 +113,12 @@ export async function checkRateLimit(
   const windowMs = windowSeconds * 1000;
   const resetAt = new Date(Date.now() + windowMs);
   const fallbackResult = {
-    allowed: true,
+    allowed: !options.failClosed,
+    available: false,
     limit,
     remaining: limit,
     resetAt,
-    retryAfterSeconds: 0,
+    retryAfterSeconds: 5,
   };
 
   const redisClient = getRedisClient();
@@ -140,6 +143,7 @@ export async function checkRateLimit(
 
     return {
       allowed: count <= limit,
+      available: true,
       limit,
       remaining: Math.max(limit - count, 0),
       resetAt: new Date(Date.now() + ttlMs),
@@ -159,6 +163,13 @@ export async function enforceRateLimit(
 
   if (result.allowed) {
     return null;
+  }
+
+  if (!result.available) {
+    return Response.json(
+      { error: "Service temporarily unavailable" },
+      { status: 503, headers: { "Retry-After": "5" } },
+    );
   }
 
   return Response.json(

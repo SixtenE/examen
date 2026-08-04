@@ -28,9 +28,7 @@ describe("catalog-paths", () => {
     expect(categoryVectorsDir("28-paintings")).toBe(
       "data/auctionet/items/28-paintings/vectors",
     );
-    expect(categoryBucketPrefix("28-paintings")).toBe(
-      "scrape/28-paintings",
-    );
+    expect(categoryBucketPrefix("28-paintings")).toBe("scrape/28-paintings");
   });
 
   it("derives category segment from search URL", () => {
@@ -55,17 +53,18 @@ describe("catalog-paths", () => {
       "data/auctionet/items/9-ceramics-porcelain/123/123456.json";
     const key = localPathToBucketKey(localPath);
 
-    expect(key).toBe(
-      "scrape/9-ceramics-porcelain/123/123456.json",
-    );
+    expect(key).toBe("scrape/9-ceramics-porcelain/123/123456.json");
     expect(bucketKeyToLocalPath(key)).toBe(localPath);
   });
 
   it("rejects paths outside the catalog root", () => {
     expect(() => localPathToBucketKey("tmp/outside.json")).toThrow(/outside/);
-    expect(() =>
-      bucketKeyToLocalPath("uploads/query-key.jpg"),
-    ).toThrow(/outside/);
+    expect(() => bucketKeyToLocalPath("uploads/query-key.jpg")).toThrow(
+      /outside/,
+    );
+    expect(() => bucketKeyToLocalPath("scrape/../../outside.json")).toThrow(
+      /outside/,
+    );
   });
 
   it("derives deterministic Qdrant point IDs", () => {
@@ -96,9 +95,9 @@ describe("catalog-paths", () => {
   it("defaults to company 232 leaf categories", () => {
     const categories = parseCatalogCategories(undefined);
     expect(categories.length).toBeGreaterThan(20);
-    expect(categories.some((category) => category.segment === "28-paintings")).toBe(
-      true,
-    );
+    expect(
+      categories.some((category) => category.segment === "28-paintings"),
+    ).toBe(true);
     expect(
       categories.find((category) => category.segment === "28-paintings")?.url,
     ).toContain("company_id=232");
