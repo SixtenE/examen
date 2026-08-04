@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
-    container: ghcr.io/railwayapp/cli:5.30.3
+    container: ghcr.io/railwayapp/cli:5.30.3@sha256:9747655fb203f9544d1edc566cd41e6f165f87f5b95a047a1308c6e98d5da105
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
