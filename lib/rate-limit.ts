@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import { createClient, type RedisClientType } from "redis";
+import { trackServerError, trackServerEvent } from "@/lib/telemetry";
 
 const DEFAULT_RATE_LIMIT_REQUESTS = 60;
 const DEFAULT_RATE_LIMIT_WINDOW_SECONDS = 60;
@@ -146,7 +148,9 @@ export async function checkRateLimit(
       retryAfterSeconds,
     };
   } catch (error) {
-    console.error("rate limit check failed:", error);
+    trackServerError(request, error, "rate_limit_check", {
+      scope: options.scope,
+    });
     return fallbackResult;
   }
 }
@@ -160,6 +164,17 @@ export async function enforceRateLimit(
   if (result.allowed) {
     return null;
   }
+
+  trackServerEvent(
+    request,
+    "rate_limit_exceeded",
+    {
+      scope: options.scope,
+      limit: result.limit,
+      retry_after_seconds: result.retryAfterSeconds,
+    },
+    SeverityNumber.WARN,
+  );
 
   return Response.json(
     { error: "Too many requests" },

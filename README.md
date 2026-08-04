@@ -77,7 +77,26 @@ AWS_SECRET_ACCESS_KEY=...
 AWS_BUCKET_NAME=...
 # Optional for Railway Buckets / other S3-compatible stores:
 # AWS_ENDPOINT_URL=https://storage.railway.app
+
+# PostHog product analytics, error tracking, logs, and traces:
+NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=phc_...
+NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com # or https://us.i.posthog.com
+
+# Optional build-only source map upload (never expose POSTHOG_API_KEY):
+POSTHOG_API_KEY=phx_...
+POSTHOG_PROJECT_ID=...
 ```
+
+PostHog is disabled when `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` is unset. The
+source map integration is enabled only when both build-only variables are set;
+the personal key needs Error Tracking write access.
+
+The integration records page views, web vitals, browser/server exceptions,
+structured operational logs, request traces, upload and matching timings,
+deletions, rate-limit failures, and result opens. It deliberately excludes raw
+images, filenames, signed URLs, embeddings, request/response bodies, and
+credentials. Inputs are masked in session replay and uploaded images are
+blocked from replay capture.
 
 ## Build the searchable catalog
 

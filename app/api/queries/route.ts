@@ -3,6 +3,7 @@ import { queries } from "@/db/schema";
 import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { trackServerError, withSpan } from "@/lib/telemetry";
 
 const DEFAULT_LIMIT = 12;
 const MAX_LIMIT = 50;
@@ -58,22 +59,27 @@ export async function GET(request: NextRequest) {
 
     const cursorDate = cursor ? new Date(cursor.createdAt) : null;
 
-    const results = await db
-      .select()
-      .from(queries)
-      .where(
-        cursor && cursorDate
-          ? or(
-              lt(queries.createdAt, cursorDate),
-              and(
-                eq(queries.createdAt, cursorDate),
-                lt(queries.id, cursor.id),
-              ),
-            )
-          : undefined,
-      )
-      .orderBy(desc(queries.createdAt), desc(queries.id))
-      .limit(limit + 1);
+    const results = await withSpan(
+      "db.list_queries",
+      { page_size: limit, has_cursor: Boolean(cursor) },
+      () =>
+        db
+          .select()
+          .from(queries)
+          .where(
+            cursor && cursorDate
+              ? or(
+                  lt(queries.createdAt, cursorDate),
+                  and(
+                    eq(queries.createdAt, cursorDate),
+                    lt(queries.id, cursor.id),
+                  ),
+                )
+              : undefined,
+          )
+          .orderBy(desc(queries.createdAt), desc(queries.id))
+          .limit(limit + 1),
+    );
 
     const hasMore = results.length > limit;
     const items = hasMore ? results.slice(0, limit) : results;
@@ -89,7 +95,8 @@ export async function GET(request: NextRequest) {
             })
           : null,
     });
-  } catch {
+  } catch (error) {
+    trackServerError(request, error, "queries_fetch");
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 },

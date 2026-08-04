@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { queryClient } from "@/components/providers";
 import { getApiErrorMessage, throwApiError } from "@/lib/api-errors";
+import posthog from "posthog-js";
 
 export function DeleteDialog({ id }: { id: string }) {
   const router = useRouter();
@@ -37,6 +38,10 @@ export function DeleteDialog({ id }: { id: string }) {
       router.push("/");
     },
     onError: (error) => {
+      posthog.captureException(error, {
+        operation: "query_delete",
+        query_id: id,
+      });
       toast.error(getApiErrorMessage(error, "Failed to delete query"));
     },
   });

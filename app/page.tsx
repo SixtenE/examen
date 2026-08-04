@@ -15,6 +15,7 @@ import {
 import { relativeTimeUntilNow } from "@/lib/utils";
 import type { QueriesPage } from "@/lib/types";
 import { toast } from "sonner";
+import posthog from "posthog-js";
 
 const PAGE_SIZE = 12;
 const INITIAL_SKELETON_COUNT = 11;
@@ -31,8 +32,7 @@ const queriesInfiniteOptions = infiniteQueryOptions({
   },
   initialPageParam: undefined as string | undefined,
   getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-  retry: (failureCount, error) =>
-    !isRateLimitError(error) && failureCount < 3,
+  retry: (failureCount, error) => !isRateLimitError(error) && failureCount < 3,
 });
 
 function QueryCardSkeleton() {
@@ -79,6 +79,7 @@ export default function Page() {
 
   useEffect(() => {
     if (error) {
+      posthog.captureException(error, { operation: "queries_fetch" });
       toast.error(getApiErrorMessage(error, "Failed to fetch queries"));
     }
   }, [error]);
@@ -117,6 +118,9 @@ export default function Page() {
                   <Link
                     href={`/${query.id}`}
                     className="bg-card flex h-28 w-full flex-col justify-between gap-4 rounded-4xl py-5 pr-5 pl-7"
+                    onClick={() =>
+                      posthog.capture("query_opened", { query_id: query.id })
+                    }
                   >
                     <div className="flex items-center justify-between gap-2">
                       <motion.p

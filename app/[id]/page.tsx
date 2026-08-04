@@ -23,6 +23,7 @@ import {
   throwApiError,
 } from "@/lib/api-errors";
 import { toast } from "sonner";
+import posthog from "posthog-js";
 
 const MATCH_SKELETON_COUNT = 9;
 
@@ -138,6 +139,10 @@ export default function Page() {
       return res.json();
     },
     onError: (error) => {
+      posthog.captureException(error, {
+        operation: "match_generation",
+        query_id: id,
+      });
       toast.error(getApiErrorMessage(error, "Failed to start matching"));
     },
     onSettled: () => {
@@ -158,12 +163,20 @@ export default function Page() {
 
   useEffect(() => {
     if (queryError) {
+      posthog.captureException(queryError, {
+        operation: "query_fetch",
+        query_id: id,
+      });
       toast.error(getApiErrorMessage(queryError, "Failed to fetch query"));
     }
   }, [queryError]);
 
   useEffect(() => {
     if (matchesError) {
+      posthog.captureException(matchesError, {
+        operation: "matches_fetch",
+        query_id: id,
+      });
       toast.error(getApiErrorMessage(matchesError, "Failed to fetch matches"));
     }
   }, [matchesError]);
@@ -207,7 +220,7 @@ export default function Page() {
               height={1500}
               sizes="(max-width: 640px) 100vw, 33vw"
               priority
-              className="bg-muted aspect-square h-auto w-full rounded-lg object-cover"
+              className="ph-no-capture bg-muted aspect-square h-auto w-full rounded-lg object-cover"
             />
           ) : (
             <div className="bg-muted aspect-square h-auto w-full animate-pulse rounded-lg object-cover" />
@@ -242,6 +255,16 @@ export default function Page() {
                     href={`https://www.auctionet.com/${match.auctionet_id}`}
                     target="_blank"
                     className="bg-card flex h-28 w-full rounded-4xl"
+                    onClick={() =>
+                      posthog.capture("reference_opened", {
+                        query_id: id,
+                        auctionet_id: match.auctionet_id,
+                        rank: index + 1,
+                        similarity_score: match.similarity_score,
+                        price: match.price,
+                        currency: match.currency,
+                      })
+                    }
                   >
                     <Image
                       src={match.image_url}

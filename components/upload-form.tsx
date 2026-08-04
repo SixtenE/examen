@@ -15,6 +15,7 @@ import { queryClient } from "@/components/providers";
 import { getApiErrorMessage, throwApiError } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 import { motion } from "motion/react";
+import posthog from "posthog-js";
 
 const formSchema = z.object({
   file: z.instanceof(File),
@@ -30,13 +31,16 @@ type UploadVariables = {
   source: "drop" | "picker";
 };
 
-async function uploadImage(file: File) {
+async function uploadImage(file: File, source: UploadVariables["source"]) {
   const formData = new FormData();
   formData.append("file", file);
 
   const response = await fetch("/api/upload", {
     method: "POST",
     body: formData,
+    headers: {
+      "X-Upload-Source": source,
+    },
   });
 
   await throwApiError(response, "Failed to upload file");
@@ -48,7 +52,14 @@ function useUploadImage() {
   const router = useRouter();
 
   return useMutation({
-    mutationFn: ({ file }: UploadVariables) => uploadImage(file),
+    mutationFn: ({ file, source }: UploadVariables) => {
+      posthog.capture("image_upload_started", {
+        source,
+        input_bytes: file.size,
+        input_mime: file.type || "unknown",
+      });
+      return uploadImage(file, source);
+    },
     onSuccess: (result) => {
       toast.success("File uploaded successfully");
       queryClient.invalidateQueries({ queryKey: ["queries"] });
@@ -61,7 +72,11 @@ function useUploadImage() {
         });
       router.push(`/${result.id}`);
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      posthog.captureException(error, {
+        operation: "image_upload",
+        source: variables.source,
+      });
       toast.error(getApiErrorMessage(error, "Failed to upload file"));
     },
   });
@@ -194,7 +209,8 @@ function UploadFormCard() {
                     asChild
                     className={cn(
                       "w-full min-w-0 truncate rounded-2xl py-6 font-semibold",
-                      uploadMutation.isPending && "pointer-events-none opacity-50",
+                      uploadMutation.isPending &&
+                        "pointer-events-none opacity-50",
                     )}
                   >
                     <label
