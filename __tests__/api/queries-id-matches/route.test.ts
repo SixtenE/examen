@@ -325,4 +325,18 @@ describe("POST /api/queries/[id]/matches", () => {
     await expect(response.json()).resolves.toEqual({ status: "ready" });
     expect(mockSearch).not.toHaveBeenCalled();
   });
+
+  it("does not expose upstream error details", async () => {
+    mockEmbedImageUrl.mockRejectedValueOnce(
+      new Error("secret upstream detail"),
+    );
+
+    const { POST } = await import("@/app/api/queries/[id]/matches/route");
+    const response = await POST(makeRequest("POST"), { params });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "Internal server error",
+    });
+  });
 });
