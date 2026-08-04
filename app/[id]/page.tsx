@@ -43,7 +43,7 @@ const matchQueryOptions = (id: string) =>
       return res.json();
     },
     refetchInterval: (query) =>
-      query.state.data && query.state.data.length > 0 ? false : 500,
+      query.state.data && query.state.data.length > 0 ? false : 2000,
     retry: (failureCount, error) =>
       !isRateLimitError(error) && failureCount < 3,
   });
