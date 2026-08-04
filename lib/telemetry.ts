@@ -18,7 +18,7 @@ export type TelemetryProperties = Record<
 type RequestErrorInfo = {
   path: string;
   method: string;
-  headers: Record<string, string | string[] | undefined>;
+  headers?: Record<string, string | string[] | undefined>;
 };
 
 type RequestErrorContext = {
@@ -61,9 +61,10 @@ function compact(properties: TelemetryProperties) {
 }
 
 function getHeader(
-  headers: Headers | Record<string, string | string[] | undefined>,
+  headers: Headers | Record<string, string | string[] | undefined> | undefined,
   name: string,
 ) {
+  if (!headers) return undefined;
   if (headers instanceof Headers) return headers.get(name) ?? undefined;
 
   const value = Object.entries(headers).find(
@@ -72,7 +73,9 @@ function getHeader(
   return Array.isArray(value) ? value[0] : value;
 }
 
-function requestContext(request: Request | RequestErrorInfo) {
+function requestContext(request: {
+  headers?: Headers | Record<string, string | string[] | undefined>;
+}) {
   return {
     distinctId: getHeader(request.headers, "x-posthog-distinct-id"),
     sessionId: getHeader(request.headers, "x-posthog-session-id"),
@@ -111,12 +114,18 @@ function errorProperties(error: unknown) {
 }
 
 function scheduleTelemetry(task?: () => Promise<void>) {
-  after(async () => {
+  const send = async () => {
     await Promise.allSettled([
       task?.() ?? Promise.resolve(),
       flushOpenTelemetry(),
     ]);
-  });
+  };
+
+  try {
+    after(send);
+  } catch {
+    void send();
+  }
 }
 
 export function trackServerEvent(

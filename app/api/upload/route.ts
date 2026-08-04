@@ -139,7 +139,7 @@ function isHeic(file: File) {
 
 export async function POST(request: NextRequest) {
   const startedAt = performance.now();
-  const uploadSourceHeader = request.headers.get("x-upload-source");
+  const uploadSourceHeader = request.headers?.get("x-upload-source");
   const uploadSource =
     uploadSourceHeader === "drop" || uploadSourceHeader === "picker"
       ? uploadSourceHeader

@@ -170,6 +170,7 @@ export async function enforceRateLimit(
     "rate_limit_exceeded",
     {
       scope: options.scope,
+      status: "rejected",
       limit: result.limit,
       retry_after_seconds: result.retryAfterSeconds,
     },
