@@ -138,7 +138,7 @@ describe("POST /api/upload", () => {
     const body = await response.json();
 
     expect(response.status).toBe(413);
-    expect(body.error).toBe("Request too large");
+    expect(body.error).toBe("File too large (max 15MB)");
   });
 
   it("rejects requests without a content length before parsing", async () => {

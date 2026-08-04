@@ -167,13 +167,14 @@ export async function POST(
 
     const searchResults = (
       await Promise.all(
-        REFERENCE_COLLECTIONS.map((collection) =>
-          qdrantClient.search(collection, {
-            vector,
+        REFERENCE_COLLECTIONS.map(async (collection) => {
+          const result = await qdrantClient.query(collection, {
+            query: vector,
             limit: SEARCH_LIMIT_PER_COLLECTION,
             with_payload: true,
-          }),
-        ),
+          });
+          return result.points;
+        }),
       )
     ).flat() as ReferenceSearchHit[];
 

@@ -23,7 +23,6 @@ describe("GET /api/queries", () => {
             {
               id: "550e8400-e29b-41d4-a716-446655440000",
               title: "Rare Vase",
-              image_key: "abc123",
               status: "ready",
               createdAt: new Date("2026-06-11T10:00:00Z"),
             },

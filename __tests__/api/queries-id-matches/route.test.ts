@@ -54,7 +54,7 @@ describe("GET /api/queries/[id]/matches", () => {
     }));
     vi.doMock("@/lib/s3", () => ({ s3Client: {} }));
     vi.doMock("@/lib/qdrant", () => ({
-      qdrantClient: { search: vi.fn() },
+      qdrantClient: { query: vi.fn() },
     }));
     vi.doMock("@/lib/embeddings", () => ({
       embedImageUrl: vi.fn(),
@@ -205,7 +205,11 @@ describe("POST /api/queries/[id]/matches", () => {
       embedImageUrl: (...args: unknown[]) => mockEmbedImageUrl(...args),
     }));
     vi.doMock("@/lib/qdrant", () => ({
-      qdrantClient: { search: (...args: unknown[]) => mockSearch(...args) },
+      qdrantClient: {
+        query: async (...args: unknown[]) => ({
+          points: await mockSearch(...args),
+        }),
+      },
     }));
     vi.doMock("@/db", () => {
       const mockDb = createDbMock({
