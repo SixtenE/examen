@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { db } from "@/db";
 import { queries } from "@/db/schema";
 import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { auth } from "@clerk/nextjs/server";
 import { s3Client } from "@/lib/s3";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -136,6 +137,8 @@ function isHeic(file: File) {
 }
 
 export async function POST(request: NextRequest) {
+  await auth.protect();
+
   const rateLimitResponse = await enforceRateLimit(request, {
     scope: "api:upload:post",
   });

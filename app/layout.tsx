@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
+import { AuthGate } from "@/components/auth-gate";
 import { Header } from "@/components/header";
 import Providers from "@/components/providers";
 
@@ -32,11 +34,13 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} antialiased`}
     >
       <body>
-        <Providers>
-          <Header />
-          {children}
-          <Toaster richColors position="bottom-center" />
-        </Providers>
+        <ClerkProvider>
+          <Providers>
+            <Header />
+            <AuthGate>{children}</AuthGate>
+            <Toaster richColors position="bottom-center" />
+          </Providers>
+        </ClerkProvider>
       </body>
     </html>
   );

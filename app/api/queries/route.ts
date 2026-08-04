@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { queries } from "@/db/schema";
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -35,6 +36,8 @@ function decodeCursor(value: string): QueryCursor | null {
 }
 
 export async function GET(request: NextRequest) {
+  await auth.protect();
+
   const rateLimitResponse = await enforceRateLimit(request, {
     scope: "api:queries:get",
   });

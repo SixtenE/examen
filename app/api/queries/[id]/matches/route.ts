@@ -8,6 +8,7 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { and, eq, ne } from "drizzle-orm";
 import type { NextRequest } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { isUuid } from "@/lib/utils";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -49,6 +50,8 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  await auth.protect();
+
   const rateLimitResponse = await enforceRateLimit(request, {
     scope: "api:queries:id:matches:get",
   });
@@ -96,6 +99,8 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  await auth.protect();
+
   const rateLimitResponse = await enforceRateLimit(request, {
     scope: "api:queries:id:matches:post",
   });

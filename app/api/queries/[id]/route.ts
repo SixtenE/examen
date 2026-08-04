@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { matches, queries } from "@/db/schema";
 import type { NextRequest } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { s3Client } from "@/lib/s3";
@@ -12,6 +13,8 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  await auth.protect();
+
   const rateLimitResponse = await enforceRateLimit(request, {
     scope: "api:queries:id:get",
   });
@@ -53,6 +56,8 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  await auth.protect();
+
   const rateLimitResponse = await enforceRateLimit(request, {
     scope: "api:queries:id:delete",
   });
