@@ -169,7 +169,7 @@ export default function Page() {
       });
       toast.error(getApiErrorMessage(queryError, "Failed to fetch query"));
     }
-  }, [queryError]);
+  }, [id, queryError]);
 
   useEffect(() => {
     if (matchesError) {
@@ -179,7 +179,7 @@ export default function Page() {
       });
       toast.error(getApiErrorMessage(matchesError, "Failed to fetch matches"));
     }
-  }, [matchesError]);
+  }, [id, matchesError]);
 
   if (queryError && !isRateLimitError(queryError)) notFound();
   if (matchesError && !isRateLimitError(matchesError)) notFound();

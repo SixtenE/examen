@@ -194,10 +194,14 @@ export function trackServerError(
 }
 
 export async function captureUnhandledRequestError(
-  error: Error,
+  error: unknown,
   request: RequestErrorInfo,
   context: RequestErrorContext,
 ) {
+  const normalized =
+    error instanceof Error
+      ? error
+      : new Error(String(error ?? "Unknown error"));
   const analyticsContext = requestContext(request);
   const properties = {
     operation: "unhandled_request",
@@ -211,17 +215,21 @@ export async function captureUnhandledRequestError(
     revalidate_reason: context.revalidateReason,
     posthogDistinctId: analyticsContext.distinctId,
     sessionId: analyticsContext.sessionId,
-    ...errorProperties(error),
+    ...errorProperties(normalized),
   };
 
   emitLog(SeverityNumber.ERROR, "unhandled request failed", properties);
 
   const posthog = getPostHog();
   await Promise.allSettled([
-    posthog?.captureExceptionImmediate(error, analyticsContext.distinctId, {
-      ...compact(properties),
-      $session_id: analyticsContext.sessionId,
-    }) ?? Promise.resolve(),
+    posthog?.captureExceptionImmediate(
+      normalized,
+      analyticsContext.distinctId,
+      {
+        ...compact(properties),
+        $session_id: analyticsContext.sessionId,
+      },
+    ) ?? Promise.resolve(),
     flushOpenTelemetry(),
   ]);
 }
