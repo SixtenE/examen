@@ -272,7 +272,7 @@ export async function POST(
 
     return Response.json(
       {
-        error: error instanceof Error ? error.message : "Internal server error",
+        error: "Match generation failed",
       },
       { status: 500 },
     );

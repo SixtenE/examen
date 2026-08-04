@@ -113,7 +113,11 @@ function UploadFormRoot({ children }: { children: ReactNode }) {
         uploadMutation.mutate({ file, source: "drop" });
       }
     },
-    onDropRejected: () => {
+    onDropRejected: ([rejection]) => {
+      posthog.capture("image_upload_rejected", {
+        reason: rejection?.errors[0]?.code ?? "unknown",
+        source: "drop",
+      });
       toast.error("Drop an image file to upload");
     },
   });
