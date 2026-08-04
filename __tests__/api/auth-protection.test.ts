@@ -12,6 +12,11 @@ import {
 } from "@/app/api/queries/[id]/matches/route";
 import type { NextRequest } from "next/server";
 
+vi.mock("@/db", () => ({ db: {} }));
+vi.mock("@/lib/s3", () => ({ s3Client: {} }));
+vi.mock("@/lib/qdrant", () => ({ qdrantClient: {} }));
+vi.mock("@/lib/embeddings", () => ({ embedImageUrl: vi.fn() }));
+
 const request = new Request("http://localhost/api/queries") as NextRequest;
 const context = { params: Promise.resolve({ id: "query-id" }) };
 

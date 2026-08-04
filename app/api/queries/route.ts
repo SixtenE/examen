@@ -68,10 +68,7 @@ export async function GET(request: NextRequest) {
         cursor && cursorDate
           ? or(
               lt(queries.createdAt, cursorDate),
-              and(
-                eq(queries.createdAt, cursorDate),
-                lt(queries.id, cursor.id),
-              ),
+              and(eq(queries.createdAt, cursorDate), lt(queries.id, cursor.id)),
             )
           : undefined,
       )
