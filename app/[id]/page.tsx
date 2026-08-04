@@ -139,10 +139,6 @@ export default function Page() {
       return res.json();
     },
     onError: (error) => {
-      posthog.captureException(error, {
-        operation: "match_generation",
-        query_id: id,
-      });
       toast.error(getApiErrorMessage(error, "Failed to start matching"));
     },
     onSettled: () => {
@@ -163,23 +159,15 @@ export default function Page() {
 
   useEffect(() => {
     if (queryError) {
-      posthog.captureException(queryError, {
-        operation: "query_fetch",
-        query_id: id,
-      });
       toast.error(getApiErrorMessage(queryError, "Failed to fetch query"));
     }
-  }, [id, queryError]);
+  }, [queryError]);
 
   useEffect(() => {
     if (matchesError) {
-      posthog.captureException(matchesError, {
-        operation: "matches_fetch",
-        query_id: id,
-      });
       toast.error(getApiErrorMessage(matchesError, "Failed to fetch matches"));
     }
-  }, [id, matchesError]);
+  }, [matchesError]);
 
   if (queryError && !isRateLimitError(queryError)) notFound();
   if (matchesError && !isRateLimitError(matchesError)) notFound();

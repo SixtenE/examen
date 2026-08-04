@@ -72,11 +72,7 @@ function useUploadImage() {
         });
       router.push(`/${result.id}`);
     },
-    onError: (error, variables) => {
-      posthog.captureException(error, {
-        operation: "image_upload",
-        source: variables.source,
-      });
+    onError: (error) => {
       toast.error(getApiErrorMessage(error, "Failed to upload file"));
     },
   });

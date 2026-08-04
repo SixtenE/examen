@@ -141,11 +141,6 @@ export async function POST(
         return Response.json({ error: "Query not found" }, { status: 404 });
       }
 
-      trackServerEvent(request, "match_generation_joined", {
-        query_id: id,
-        query_status: existing.status,
-        duration_ms: Math.round(performance.now() - startedAt),
-      });
       return Response.json({ status: "processing" });
     }
 
