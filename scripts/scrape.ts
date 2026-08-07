@@ -77,7 +77,7 @@ const DEFAULT_CONCURRENCY = 2;
 
 function usage() {
   return [
-    "Usage: pnpm scrape:auctionet -- --url <auctionet-category-url> [options]",
+    "Usage: pnpm scrape -- --url <auctionet-category-url> [options]",
     "",
     "Writes Auctionet Item JSON to the Railway bucket under scrape/{segment}/…",
     "Category segment is taken from the URL path (/…/search/{segment}).",
@@ -941,7 +941,7 @@ async function main() {
   console.log(
     `Saved ${stats.saved_item_count}, skipped ${stats.skipped_item_count}, failed ${stats.failed_item_count}`,
   );
-  // Parsed by catalog:pipeline to share --max-items across categories.
+  // Parsed by cron to share --max-items across categories.
   console.log(`SCRAPE_SAVED=${stats.saved_item_count}`);
 
   if (stats.failed_item_count > 0) {

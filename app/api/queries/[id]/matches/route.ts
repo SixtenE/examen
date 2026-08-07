@@ -1,5 +1,6 @@
 import { db } from "@/db";
 import { matches, queries } from "@/db/schema";
+import { REFERENCE_COLLECTIONS } from "@/lib/catalog-paths";
 import { embedImageUrl } from "@/lib/embeddings";
 import { parseSoldAtUnix, rankScore } from "@/lib/match-rank";
 import { qdrantClient } from "@/lib/qdrant";
@@ -11,11 +12,6 @@ import type { NextRequest } from "next/server";
 import { isUuid } from "@/lib/utils";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
-const REFERENCE_COLLECTIONS = [
-  "references-28-paintings",
-  //"references-9-ceramics-porcelain",
-  "references",
-] as const;
 const SEARCH_LIMIT_PER_COLLECTION = 128;
 const MATCH_LIMIT = 32;
 

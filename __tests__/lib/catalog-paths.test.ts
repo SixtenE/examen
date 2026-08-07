@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertCategorySegment,
+  AUCTIONET_LEAF_CATEGORIES,
   bucketKeyToLocalPath,
   categoryBucketPrefix,
   categoryItemsDir,
@@ -11,6 +12,10 @@ import {
   itemBucketKey,
   localPathToBucketKey,
   parseCatalogCategories,
+  parsePipelineStages,
+  PIPELINE_STAGES,
+  REFERENCE_COLLECTIONS,
+  referenceCollection,
 } from "@/lib/catalog-paths";
 
 describe("catalog-paths", () => {
@@ -93,12 +98,19 @@ describe("catalog-paths", () => {
     ]);
   });
 
-  it("defaults to company 232 leaf categories", () => {
+  it("defaults to the Auctionet leaf taxonomy with company 232 URLs", () => {
     const categories = parseCatalogCategories(undefined);
-    expect(categories.length).toBeGreaterThan(20);
+    expect(categories).toHaveLength(AUCTIONET_LEAF_CATEGORIES.length);
+    expect(AUCTIONET_LEAF_CATEGORIES).toHaveLength(39);
     expect(categories.some((category) => category.segment === "28-paintings")).toBe(
       true,
     );
+    expect(categories.some((category) => category.segment === "59-licence-weapons")).toBe(
+      true,
+    );
+    expect(
+      categories.some((category) => category.segment === "170-wine-port-spirits"),
+    ).toBe(true);
     expect(
       categories.find((category) => category.segment === "28-paintings")?.url,
     ).toContain("company_id=232");
@@ -108,5 +120,22 @@ describe("catalog-paths", () => {
     expect(
       categories.some((category) => category.segment === "16-furniture"),
     ).toBe(false);
+  });
+
+  it("derives Qdrant collection names from category segments", () => {
+    expect(referenceCollection("9-ceramics-porcelain")).toBe(
+      "references-9-ceramics-porcelain",
+    );
+    expect(REFERENCE_COLLECTIONS).toHaveLength(AUCTIONET_LEAF_CATEGORIES.length);
+    expect(REFERENCE_COLLECTIONS).toContain("references-28-paintings");
+    expect(REFERENCE_COLLECTIONS).toContain("references-9-ceramics-porcelain");
+    expect(REFERENCE_COLLECTIONS).not.toContain("references");
+  });
+
+  it("parses pipeline stages", () => {
+    expect([...parsePipelineStages(undefined)]).toEqual([...PIPELINE_STAGES]);
+    expect([...parsePipelineStages("")]).toEqual([...PIPELINE_STAGES]);
+    expect([...parsePipelineStages("scrape,upsert")]).toEqual(["scrape", "upsert"]);
+    expect(() => parsePipelineStages("scrape,upload")).toThrow(/Unknown pipeline stage/);
   });
 });

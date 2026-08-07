@@ -82,54 +82,56 @@ AWS_BUCKET_NAME=...
 ## Build the searchable catalog
 
 ```bash
-# 1. Scrape sold Auctionet items into the Railway bucket (segment from URL)
-pnpm scrape:auctionet -- \
-  --url "https://auctionet.com/en/search/9-ceramics-porcelain?is=ended"
+# Scrape only (Auctionet → bucket)
+pnpm cron -- --stages scrape --category 9-ceramics-porcelain
 
-# 2. Sync items locally (or use catalog:pipeline), then embed
-pnpm catalog:pipeline -- --skip-scrape --category 9-ceramics-porcelain
+# Embed + store Vector Artifacts in the bucket (no scrape, no Qdrant)
+pnpm cron -- --stages embed,store --category 9-ceramics-porcelain
 
-# Or manually after downloading item JSON under data/auctionet/items/…:
-pnpm embed:auctionet-vectors -- \
+# Embed + store + upsert Qdrant
+pnpm cron -- --stages embed,store,upsert --category 9-ceramics-porcelain
+
+# Or run individual scripts after local item JSON exists:
+pnpm embed -- \
   --items data/auctionet/items/9-ceramics-porcelain \
   --out data/auctionet/items/9-ceramics-porcelain/vectors
 
-# 3. Seed Qdrant (collection name derived from the category folder)
-pnpm seed:references -- \
+pnpm upsert -- \
   --vectors data/auctionet/items/9-ceramics-porcelain/vectors \
   --items data/auctionet/items/9-ceramics-porcelain
 ```
 
-Scrape writes only to the bucket. Embed/seed still read local JSON under `data/auctionet/`.
+`--stages` accepts any comma list of `scrape`, `embed`, `store`, `upsert` (default: all four). Bucket→local sync is implicit whenever embed, store, or upsert is selected.
 
 ### Daily automation on Railway
 
-`pnpm catalog:pipeline` runs the full loop for each configured Auctionet Category:
+`pnpm cron` runs the selected stages for each configured Auctionet Category:
 
-1. Scrape (skip existing bucket objects via `HeadObject`)
-2. Sync Auctionet Item JSON down from the Railway Bucket (for embed/seed)
-3. Reuse Vector Artifacts already in Qdrant or the bucket; embed only the rest
-4. Upload new Vector Artifacts to the bucket (`HeadObject` skip)
-5. Seed Qdrant (skip artifacts whose deterministic point IDs already exist)
+1. **scrape** — Auctionet Item JSON to the bucket (`HeadObject` skip)
+2. Sync items down from the bucket (implicit when embed/store/upsert run)
+3. **embed** — reuse Vector Artifacts already in Qdrant or the bucket; embed only the rest
+4. **store** — Vector Artifacts to the bucket (`HeadObject` skip)
+5. **upsert** — Qdrant upsert (skip artifacts whose deterministic point IDs already exist)
 
 Create **separate** Railway services for cron (do not put schedules on the web app):
 
-- Scrape-only: point at `railway.scrape.toml` — every 30 minutes, bucket + `CATALOG_CATEGORIES` only
-- Full pipeline: point at `railway.catalog.toml` — daily 03:00 UTC
+- Scrape-only: point at `railway.scrape.toml` — every 30 minutes, `--stages scrape`
 
 ```bash
 # Local dry run of the orchestrator
-pnpm catalog:pipeline -- --dry-run --max-pages 1 --max-items 5
+pnpm cron -- --dry-run --max-pages 1 --max-items 5
 
 # Scrape-only (same as railway.scrape.toml)
-pnpm catalog:pipeline -- --skip-embed --skip-seed
+pnpm cron -- --stages scrape --mode incremental --max-items 500
 ```
 
-Extra env for the cron services (in addition to the app vars; full pipeline also needs OpenRouter/Qdrant):
+Extra env for the cron services (in addition to the app vars; embed/upsert also need OpenRouter/Qdrant):
 
 ```bash
 AWS_ENDPOINT_URL=https://storage.railway.app   # from the Railway Bucket credentials
-CATALOG_CATEGORIES=9-ceramics-porcelain,28-paintings
+# Optional: override the default (full Auctionet leaf taxonomy, company 232 URLs).
+# Omit CATALOG_CATEGORIES to scrape every leaf.
+# CATALOG_CATEGORIES=9-ceramics-porcelain,28-paintings
 # Optional override with a custom listing URL:
 # CATALOG_CATEGORIES=28-paintings|https://auctionet.com/en/search/28-paintings?is=ended
 ```
@@ -152,8 +154,8 @@ pnpm dev                        # Start the development server
 pnpm build                      # Create a production build
 pnpm test                       # Run tests
 pnpm lint                       # Run ESLint
-pnpm scrape:auctionet           # Collect sold Auctionet items
-pnpm embed:auctionet-vectors    # Generate catalog embeddings
-pnpm seed:references            # Seed the Qdrant catalog
-pnpm catalog:pipeline           # Daily scrape → bucket → embed → Qdrant
+pnpm scrape                     # Collect sold Auctionet items
+pnpm embed                      # Generate catalog embeddings
+pnpm upsert                     # Upsert References into Qdrant
+pnpm cron                       # Stages: scrape → embed → store → upsert
 ```

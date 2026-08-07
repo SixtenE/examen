@@ -4,12 +4,16 @@ An app for finding catalog images that are visually similar to an image a user u
 
 ## Language
 
+**Auction House**:
+The single Auctionet seller whose sold Items form the Catalog. Currently Crafoord Stockholm (company 232).
+_Avoid_: Seller, company, auctioneer
+
 **Catalog**:
-The searchable set of sold Auctionet Items whose images have been embedded as References. A Query searches the Catalog to produce Matches.
+The searchable set of sold Auctionet Items from one Auction House whose images have been embedded as References. A Query searches the Catalog to produce Matches.
 _Avoid_: Dataset, corpus, index
 
 **Auctionet Category**:
-A partition of the Catalog defined by one Auctionet search category (for example ceramics and porcelain, or paintings). Each category is seeded into its own Qdrant collection; Match generation searches all configured categories and ranks results globally.
+A partition of the Catalog defined by one Auctionet search leaf category (for example ceramics and porcelain, or paintings). May be empty when the Auction House has never sold in that category. Each category is seeded into its own Qdrant collection; Match generation searches all categories and ranks results globally.
 _Avoid_: Collection, department, section
 
 **Reference**:
@@ -50,5 +54,5 @@ The external catalog entity on Auctionet whose metadata is scraped and whose ima
 _Avoid_: Listing, lot, catalog entry
 
 **Vector Artifact**:
-The on-disk JSON holding one Auctionet Item's pre-computed Reference embeddings, produced by the embed script and consumed by seeding. Not the catalog itself; Qdrant is.
+The durable bucket JSON holding one Auctionet Item's pre-computed Reference embeddings, produced by the embed stage and consumed by upsert. Local copies on the cron disk are scratch space only. Not the catalog itself; Qdrant is.
 _Avoid_: Vector file, embeddings file

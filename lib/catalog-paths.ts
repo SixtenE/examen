@@ -6,13 +6,42 @@ export const CATEGORY_SEGMENT_PATTERN = /^\d+-[a-z0-9-]+$/;
 export const MAX_REFERENCES_PER_ITEM = 100;
 export const CRAFOORD_STOCKHOLM_COMPANY_ID = 232;
 
+export const PIPELINE_STAGES = ["scrape", "embed", "store", "upsert"] as const;
+export type PipelineStage = (typeof PIPELINE_STAGES)[number];
+
 export type CatalogCategory = {
   segment: string;
   url: string;
 };
 
-/** Static leaf set for Crafoord Stockholm — parents Art/Furniture expanded. */
-export const COMPANY_232_LEAF_SEGMENTS = [
+export function parsePipelineStages(value: string | undefined): Set<PipelineStage> {
+  if (!value?.trim()) {
+    return new Set(PIPELINE_STAGES);
+  }
+
+  const stages = new Set<PipelineStage>();
+
+  for (const entry of value.split(",")) {
+    const stage = entry.trim();
+
+    if (stage.length === 0) {
+      throw new Error("PIPELINE_STAGES contains an empty entry");
+    }
+
+    if (!(PIPELINE_STAGES as readonly string[]).includes(stage)) {
+      throw new Error(
+        `Unknown pipeline stage: ${stage} (expected ${PIPELINE_STAGES.join(", ")})`,
+      );
+    }
+
+    stages.add(stage as PipelineStage);
+  }
+
+  return stages;
+}
+
+/** Auctionet leaf taxonomy — parents Art/Furniture expanded; scrape URLs stay company-filtered. */
+export const AUCTIONET_LEAF_CATEGORIES = [
   "1-lighting-lamps",
   "6-glass",
   "9-ceramics-porcelain",
@@ -40,10 +69,12 @@ export const COMPANY_232_LEAF_SEGMENTS = [
   "50-books-maps-manuscripts",
   "57-photo-cameras-lenses",
   "58-swedish-folk-art",
+  "59-licence-weapons",
   "117-asiatica",
   "119-drawings",
   "134-ethnographica",
   "137-weapons-militaria",
+  "170-wine-port-spirits",
   "249-vehicles-boats-parts",
   "261-collectables",
   "270-garden-architectural",
@@ -59,9 +90,9 @@ export function companyCategoryUrl(
   return `https://auctionet.com/en/search/${assertCategorySegment(segment)}?is=ended&company_id=${companyId}`;
 }
 
-/** Crafoord Stockholm (company 232) leaf categories — Art/Furniture parents expanded. */
+/** Leaf categories with Auction House–scoped listing URLs. */
 export const DEFAULT_CATALOG_CATEGORIES: CatalogCategory[] =
-  COMPANY_232_LEAF_SEGMENTS.map((segment) => ({
+  AUCTIONET_LEAF_CATEGORIES.map((segment) => ({
     segment,
     url: companyCategoryUrl(segment),
   }));
@@ -75,6 +106,13 @@ export function assertCategorySegment(segment: string) {
 
   return segment;
 }
+
+/** Qdrant collection name for one Auctionet Category. */
+export function referenceCollection(segment: string) {
+  return `references-${assertCategorySegment(segment)}`;
+}
+
+export const REFERENCE_COLLECTIONS = AUCTIONET_LEAF_CATEGORIES.map(referenceCollection);
 
 export function categoryItemsDir(segment: string, root = LOCAL_CATALOG_ROOT) {
   return path.join(root, assertCategorySegment(segment));

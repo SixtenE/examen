@@ -2,6 +2,8 @@ import "dotenv/config";
 
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { referenceCollection } from "../lib/catalog-paths";
+import { EMBEDDING_DIMENSIONS } from "../lib/embeddings";
 
 type QdrantClient = typeof import("../lib/qdrant").qdrantClient;
 
@@ -69,14 +71,12 @@ type Summary = {
 };
 
 const DEFAULT_BATCH_SIZE = 100;
-const CATEGORY_SEGMENT_PATTERN = /^\d+-[a-z0-9-]+$/;
 const EMBEDDING_MODEL = "google/gemini-embedding-2";
-const EMBEDDING_DIMENSIONS = 3072;
 const MAX_REFERENCES_PER_ITEM = 100;
 
 function usage() {
   return [
-    "Usage: pnpm seed:references -- --vectors <dir> --items <dir> [options]",
+    "Usage: pnpm upsert -- --vectors <dir> --items <dir> [options]",
     "",
     "Options:",
     "  --vectors <dir>     Per-category Vector Artifact directory, inside the category folder (required)",
@@ -113,13 +113,17 @@ function parsePositiveInteger(value: string, name: string) {
 function deriveCollectionName(vectorsDir: string) {
   const categorySegment = path.basename(path.dirname(path.resolve(vectorsDir)));
 
-  if (!CATEGORY_SEGMENT_PATTERN.test(categorySegment)) {
+  try {
+    return referenceCollection(categorySegment);
+  } catch {
     throw new Error(
       `--vectors must live inside an Auctionet Category folder like 9-ceramics-porcelain/vectors, got category segment ${categorySegment}`,
     );
   }
+}
 
-  return `references-${categorySegment}`;
+function categorySegmentFromVectorsDir(vectorsDir: string) {
+  return path.basename(path.dirname(path.resolve(vectorsDir)));
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -437,69 +441,6 @@ function buildPoints(artifact: VectorArtifact, item: AuctionetItemJson): Referen
   }));
 }
 
-function getAnonymousVectorParams(collectionInfo: unknown) {
-  if (!isRecord(collectionInfo) || !isRecord(collectionInfo.config)) {
-    return null;
-  }
-
-  const { params } = collectionInfo.config;
-  if (!isRecord(params) || !isRecord(params.vectors)) {
-    return null;
-  }
-
-  const { size, distance } = params.vectors;
-  if (typeof size !== "number" || typeof distance !== "string") {
-    return null;
-  }
-
-  return { size, distance };
-}
-
-async function validateCollectionConfig(client: QdrantClient, collectionName: string) {
-  const vectorParams = getAnonymousVectorParams(await client.getCollection(collectionName));
-
-  if (!vectorParams) {
-    throw new Error(`${collectionName} collection must use an anonymous dense vector`);
-  }
-
-  if (vectorParams.size !== EMBEDDING_DIMENSIONS || vectorParams.distance.toLowerCase() !== "cosine") {
-    throw new Error(
-      `${collectionName} collection has ${vectorParams.size}/${vectorParams.distance}, expected ${EMBEDDING_DIMENSIONS}/Cosine. Re-run with --recreate to rebuild it.`,
-    );
-  }
-}
-
-async function ensureCollection(
-  client: QdrantClient,
-  collectionName: string,
-  options: Pick<CliOptions, "recreate">,
-) {
-  const collectionConfig = {
-    vectors: {
-      size: EMBEDDING_DIMENSIONS,
-      distance: "Cosine",
-    },
-  } as const;
-
-  if (options.recreate) {
-    await client.recreateCollection(collectionName, collectionConfig);
-    await validateCollectionConfig(client, collectionName);
-    console.log(`recreated collection: ${collectionName}`);
-    return;
-  }
-
-  const { exists } = await client.collectionExists(collectionName);
-  if (exists) {
-    await validateCollectionConfig(client, collectionName);
-    console.log(`collection exists: ${collectionName}`);
-    return;
-  }
-
-  await client.createCollection(collectionName, collectionConfig);
-  await validateCollectionConfig(client, collectionName);
-  console.log(`created collection: ${collectionName}`);
-}
-
 async function artifactAlreadySeeded(client: QdrantClient, collectionName: string, pointIds: number[]) {
   if (pointIds.length === 0) {
     return true;
@@ -585,7 +526,10 @@ async function seedReferences(options: CliOptions, client: QdrantClient | null) 
         : `would ensure collection: ${options.collectionName}`,
     );
   } else if (client) {
-    await ensureCollection(client, options.collectionName, options);
+    const { ensureReferenceCollection } = await import("../lib/qdrant");
+    await ensureReferenceCollection(categorySegmentFromVectorsDir(options.vectorsDir), {
+      recreate: options.recreate,
+    });
   }
 
   const tracker = createProgressTracker(selectedArtifactFiles.length);

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { REFERENCE_COLLECTIONS } from "@/lib/catalog-paths";
 import { createDbMock } from "../../helpers/mock-db";
 
 const QUERY_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -158,13 +159,17 @@ describe("POST /api/queries/[id]/matches", () => {
         ]);
       }
 
-      if (collection === "references") {
+      if (collection === "references-9-ceramics-porcelain") {
         return Promise.resolve([
           hit("shared-item", 0.85, MONTH_AGO_UNIX),
           ...Array.from({ length: 25 }, (_, index) =>
             hit(`item-${String(index + 22).padStart(3, "0")}`, 0.74 - index * 0.01),
           ),
         ]);
+      }
+
+      if ((REFERENCE_COLLECTIONS as readonly string[]).includes(collection)) {
+        return Promise.resolve([]);
       }
 
       return Promise.reject(new Error(`unexpected collection: ${collection}`));
@@ -231,13 +236,13 @@ describe("POST /api/queries/[id]/matches", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(mockSearch).toHaveBeenCalledTimes(2);
+    expect(mockSearch).toHaveBeenCalledTimes(REFERENCE_COLLECTIONS.length);
     expect(mockSearch).toHaveBeenCalledWith(
       "references-28-paintings",
       expect.objectContaining({ limit: 128, with_payload: true }),
     );
     expect(mockSearch).toHaveBeenCalledWith(
-      "references",
+      "references-9-ceramics-porcelain",
       expect.objectContaining({ limit: 128, with_payload: true }),
     );
     expect(body).toHaveLength(32);
@@ -260,7 +265,7 @@ describe("POST /api/queries/[id]/matches", () => {
         ]);
       }
 
-      if (collection === "references") {
+      if ((REFERENCE_COLLECTIONS as readonly string[]).includes(collection)) {
         return Promise.resolve([]);
       }
 

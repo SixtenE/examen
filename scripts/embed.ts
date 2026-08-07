@@ -58,7 +58,7 @@ const OPENROUTER_EMBEDDINGS_URL = "https://openrouter.ai/api/v1/embeddings";
 
 function usage() {
   return [
-    "Usage: pnpm embed:auctionet-vectors -- --items <dir> --out <dir> [options]",
+    "Usage: pnpm embed -- --items <dir> --out <dir> [options]",
     "",
     "Options:",
     "  --items <dir>          Per-category Auctionet Item directory (required)",

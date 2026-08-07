@@ -10,6 +10,7 @@ import {
   listingOrdersForSegment,
 } from "../lib/auctionet-leaves";
 import {
+  AUCTIONET_LEAF_CATEGORIES,
   categoryBucketPrefix,
   categoryItemsDir,
   categoryVectorsBucketPrefix,
@@ -18,7 +19,10 @@ import {
   expectedPointIds,
   localPathToBucketKey,
   parseCatalogCategories,
+  parsePipelineStages,
+  referenceCollection,
   type CatalogCategory,
+  type PipelineStage,
 } from "../lib/catalog-paths";
 
 type PipelineMode = "backfill" | "incremental";
@@ -26,9 +30,7 @@ type PipelineMode = "backfill" | "incremental";
 type CliOptions = {
   categories: CatalogCategory[];
   dryRun: boolean;
-  skipScrape: boolean;
-  skipEmbed: boolean;
-  skipSeed: boolean;
+  stages: Set<PipelineStage>;
   maxPages: number | null;
   maxItems: number | null;
   mode: PipelineMode;
@@ -44,21 +46,19 @@ type ItemSummary = {
 
 function usage() {
   return [
-    "Usage: pnpm catalog:pipeline -- [options]",
+    "Usage: pnpm cron -- [options]",
     "",
-    "Daily catalog pipeline: scrape → Railway bucket → embed → Qdrant.",
+    "Daily catalog pipeline: scrape → embed → store → upsert.",
     "Duplicate checks: bucket HeadObject (scrape), local/vector files, Qdrant point IDs.",
     "",
     "Options:",
     "  --category <segment|url>   Category segment, or segment|url (repeatable)",
     "  --mode <backfill|incremental>  Scrape strategy (default: backfill)",
+    "  --stages <list>            Comma list: scrape,embed,store,upsert (default: all)",
     "  --discover-leaves          Refresh leaf categories from Auctionet facets",
     `  --company-id <n>           Company for --discover-leaves (default: ${CRAFOORD_STOCKHOLM_COMPANY_ID})`,
     "  --dry-run                  Print planned work without side effects",
-    "  --skip-scrape              Skip Auctionet scraping",
-    "  --skip-embed               Skip embedding",
-    "  --skip-seed                Skip Qdrant seeding",
-    "  --max-pages <n>            Forwarded to scrape:auctionet",
+    "  --max-pages <n>            Forwarded to scrape",
     "  --max-items <n>            Max newly scraped items across categories (skips excluded)",
   ].join("\n");
 }
@@ -88,9 +88,7 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
 } {
   const categoryArgs: string[] = [];
   let dryRun = false;
-  let skipScrape = false;
-  let skipEmbed = false;
-  let skipSeed = false;
+  let stages = parsePipelineStages(undefined);
   let maxPages: number | null = null;
   let maxItems: number | null = null;
   let mode: PipelineMode = "backfill";
@@ -116,6 +114,10 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
         index += 1;
         break;
       }
+      case "--stages":
+        stages = parsePipelineStages(readOptionValue(args, index, arg));
+        index += 1;
+        break;
       case "--discover-leaves":
         discoverLeaves = true;
         break;
@@ -128,15 +130,6 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
         break;
       case "--dry-run":
         dryRun = true;
-        break;
-      case "--skip-scrape":
-        skipScrape = true;
-        break;
-      case "--skip-embed":
-        skipEmbed = true;
-        break;
-      case "--skip-seed":
-        skipSeed = true;
         break;
       case "--max-pages":
         maxPages = parsePositiveInteger(readOptionValue(args, index, arg), arg);
@@ -158,9 +151,7 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
   return {
     categoryArgs,
     dryRun,
-    skipScrape,
-    skipEmbed,
-    skipSeed,
+    stages,
     maxPages,
     maxItems,
     mode,
@@ -313,7 +304,7 @@ async function prepareVectors(category: CatalogCategory, dryRun: boolean) {
   );
   const itemsDir = categoryItemsDir(category.segment);
   const vectorsDir = categoryVectorsDir(category.segment);
-  const collectionName = `references-${category.segment}`;
+  const collectionName = referenceCollection(category.segment);
   const itemFiles = await discoverItemFiles(itemsDir, vectorsDir);
 
   let alreadyInQdrant = 0;
@@ -378,7 +369,7 @@ async function runCategory(
 
   console.log(`\n=== ${category.segment} ===`);
 
-  if (!options.skipScrape) {
+  if (options.stages.has("scrape")) {
     if (scrapeMaxItems === 0) {
       console.log("Scrape max-items budget exhausted — skipping scrape");
     } else {
@@ -404,19 +395,24 @@ async function runCategory(
         `Scraping Auctionet (${options.mode}; skips existing bucket objects)...`,
       );
       const scrapeResult = await runScript(
-        "scripts/scrape-auctionet.ts",
+        "scripts/scrape.ts",
         scrapeArgs,
         options.dryRun,
       );
       if (scrapeResult.code !== 0) {
-        throw new Error(`scrape:auctionet exited with code ${scrapeResult.code}`);
+        throw new Error(`scrape exited with code ${scrapeResult.code}`);
       }
       scrapedSaved = parseScrapeSaved(scrapeResult.output);
     }
   }
 
-  if (options.skipEmbed && options.skipSeed) {
-    console.log("Skipping bucket → local sync (embed and seed both skipped)");
+  const needsLocal =
+    options.stages.has("embed") ||
+    options.stages.has("store") ||
+    options.stages.has("upsert");
+
+  if (!needsLocal) {
+    console.log("Skipping bucket → local sync (no embed/store/upsert stages)");
     return scrapedSaved;
   }
 
@@ -443,7 +439,7 @@ async function runCategory(
     `prepare vectors: qdrant-skip ${prepared.alreadyInQdrant}, downloaded ${prepared.downloaded}, pending embed ${prepared.pendingEmbed}, unsold ${prepared.unsold}`,
   );
 
-  if (!options.skipEmbed) {
+  if (options.stages.has("embed")) {
     const embedArgs = ["--items", itemsDir, "--out", vectorsDir];
     if (options.maxItems !== null) {
       embedArgs.push("--max-items", String(options.maxItems));
@@ -454,44 +450,44 @@ async function runCategory(
 
     console.log("Embedding images (skips existing Vector Artifacts)...");
     const embedResult = await runScript(
-      "scripts/embed-auctionet-vectors.ts",
+      "scripts/embed.ts",
       embedArgs,
       false,
     );
     if (embedResult.code !== 0) {
-      throw new Error(
-        `embed:auctionet-vectors exited with code ${embedResult.code}`,
+      throw new Error(`embed exited with code ${embedResult.code}`);
+    }
+  }
+
+  if (options.stages.has("store")) {
+    console.log("Storing Vector Artifacts in bucket (skip existing remote)...");
+    if (options.dryRun) {
+      console.log(`dry-run sync up vectors: ${vectorsDir}`);
+    } else {
+      const up = await syncVectorsDirUp({ vectorsDir });
+      console.log(
+        `local → bucket vectors: uploaded ${up.uploaded}, skipped ${up.skipped}`,
       );
     }
   }
 
-  console.log("Uploading Vector Artifacts to bucket (skip existing remote)...");
-  if (options.dryRun) {
-    console.log(`dry-run sync up vectors: ${vectorsDir}`);
-  } else {
-    const up = await syncVectorsDirUp({ vectorsDir });
-    console.log(
-      `local → bucket vectors: uploaded ${up.uploaded}, skipped ${up.skipped}`,
-    );
-  }
-
-  if (!options.skipSeed) {
-    const seedArgs = ["--vectors", vectorsDir, "--items", itemsDir];
+  if (options.stages.has("upsert")) {
+    const upsertArgs = ["--vectors", vectorsDir, "--items", itemsDir];
     if (options.maxItems !== null) {
-      seedArgs.push("--max-items", String(options.maxItems));
+      upsertArgs.push("--max-items", String(options.maxItems));
     }
     if (options.dryRun) {
-      seedArgs.push("--dry-run");
+      upsertArgs.push("--dry-run");
     }
 
-    console.log("Seeding Qdrant (skips artifacts whose points already exist)...");
-    const seedResult = await runScript(
-      "scripts/seed-references.ts",
-      seedArgs,
+    console.log("Upserting Qdrant (skips artifacts whose points already exist)...");
+    const upsertResult = await runScript(
+      "scripts/upsert.ts",
+      upsertArgs,
       false,
     );
-    if (seedResult.code !== 0) {
-      throw new Error(`seed:references exited with code ${seedResult.code}`);
+    if (upsertResult.code !== 0) {
+      throw new Error(`upsert exited with code ${upsertResult.code}`);
     }
   }
 
@@ -530,9 +526,7 @@ async function main() {
   const options: CliOptions = {
     categories,
     dryRun: parsed.dryRun,
-    skipScrape: parsed.skipScrape,
-    skipEmbed: parsed.skipEmbed,
-    skipSeed: parsed.skipSeed,
+    stages: parsed.stages,
     maxPages: parsed.maxPages,
     maxItems: parsed.maxItems,
     mode: parsed.mode,
@@ -545,21 +539,32 @@ async function main() {
   }
 
   console.log(
-    `Catalog pipeline (${options.mode}) starting for ${options.categories
+    `Catalog pipeline (${options.mode}; stages ${[...options.stages].join(",")}) starting for ${options.categories
       .map((category) => category.segment)
       .join(", ")}`,
   );
+
+  const needsLocal =
+    options.stages.has("embed") ||
+    options.stages.has("store") ||
+    options.stages.has("upsert");
+
+  // prepareVectors retrieves point IDs before upsert creates collections; ensure all leaves first.
+  if (!options.dryRun && needsLocal) {
+    const { ensureReferenceCollection } = await import("../lib/qdrant");
+    console.log(
+      `Ensuring ${AUCTIONET_LEAF_CATEGORIES.length} Qdrant collections...`,
+    );
+    for (const segment of AUCTIONET_LEAF_CATEGORIES) {
+      await ensureReferenceCollection(segment);
+    }
+  }
 
   let scrapeBudget = options.maxItems;
   let totalSaved = 0;
 
   for (const category of options.categories) {
-    if (
-      !options.skipScrape &&
-      scrapeBudget === 0 &&
-      options.skipEmbed &&
-      options.skipSeed
-    ) {
+    if (options.stages.has("scrape") && scrapeBudget === 0 && !needsLocal) {
       console.log(
         `\nScrape --max-items budget exhausted after ${totalSaved} new items; stopping`,
       );
@@ -573,7 +578,7 @@ async function main() {
     }
   }
 
-  if (options.maxItems !== null && !options.skipScrape) {
+  if (options.maxItems !== null && options.stages.has("scrape")) {
     console.log(
       `\nScrape saved ${totalSaved} new items (budget ${options.maxItems})`,
     );
