@@ -5,6 +5,9 @@ const mockS3Send = vi.hoisted(() => vi.fn().mockResolvedValue({}));
 const mockInsertReturning = vi.hoisted(() =>
   vi.fn().mockResolvedValue([{ id: "550e8400-e29b-41d4-a716-446655440000" }]),
 );
+const mockInsertValues = vi.hoisted(() =>
+  vi.fn(() => ({ returning: mockInsertReturning })),
+);
 const mockEnforceRateLimit = vi.hoisted(() => vi.fn().mockResolvedValue(null));
 
 vi.mock("sharp", () => {
@@ -28,9 +31,7 @@ vi.mock("@/lib/s3", () => ({
 vi.mock("@/db", () => ({
   db: {
     insert: vi.fn(() => ({
-      values: vi.fn(() => ({
-        returning: mockInsertReturning,
-      })),
+      values: mockInsertValues,
     })),
   },
 }));
@@ -41,8 +42,13 @@ vi.mock("@/lib/rate-limit", () => ({
 
 import { POST } from "@/app/api/upload/route";
 
-function makeUploadRequest(file: File | null) {
+function makeUploadRequest(file: File | null, includeLength = true) {
   return {
+    headers: new Headers(
+      includeLength
+        ? { "content-length": String((file?.size ?? 0) + 512) }
+        : {},
+    ),
     formData: async () => {
       const formData = new FormData();
       if (file) {
@@ -82,7 +88,11 @@ describe("POST /api/upload", () => {
 
     expect(response.status).toBe(200);
     expect(body.id).toBe("550e8400-e29b-41d4-a716-446655440000");
-    expect(typeof body.key).toBe("string");
+    expect(body.key).toBeUndefined();
+    expect(response.headers.get("set-cookie")).toContain("examen-owner=");
+    expect(mockInsertValues).toHaveBeenCalledWith(
+      expect.objectContaining({ owner_id: expect.any(String) }),
+    );
     expect(mockS3Send).toHaveBeenCalled();
   });
 
@@ -109,7 +119,16 @@ describe("POST /api/upload", () => {
     const body = await response.json();
 
     expect(response.status).toBe(400);
-    expect(body.error).toBe("File is not an image");
+    expect(body.error).toBe("Unsupported image type");
+  });
+
+  it("rejects SVG uploads", async () => {
+    const file = new File(["<svg/>"], "image.svg", {
+      type: "image/svg+xml",
+    });
+    const response = await POST(makeUploadRequest(file));
+
+    expect(response.status).toBe(400);
   });
 
   it("returns 413 for files over 15MB", async () => {
@@ -120,5 +139,11 @@ describe("POST /api/upload", () => {
 
     expect(response.status).toBe(413);
     expect(body.error).toBe("File too large (max 15MB)");
+  });
+
+  it("rejects requests without a content length before parsing", async () => {
+    const response = await POST(makeUploadRequest(null, false));
+
+    expect(response.status).toBe(411);
   });
 });

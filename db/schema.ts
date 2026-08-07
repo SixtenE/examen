@@ -16,6 +16,7 @@ export const queryStatus = pgEnum("query_status", [
 
 export const queries = pgTable("queries", {
   id: uuid("id").primaryKey().defaultRandom(),
+  owner_id: uuid("owner_id").notNull().defaultRandom(),
   title: varchar("title").notNull(),
   image_key: varchar("image_key").notNull().unique(),
   status: queryStatus("status").notNull().default("pending"),

@@ -11,10 +11,10 @@ vi.mock("redis", () => ({
   createClient: mockCreateClient,
 }));
 
-function makeRequest(ip = "203.0.113.7") {
+function makeRequest(ip = "203.0.113.7", untrusted = "198.51.100.1") {
   return new Request("http://localhost:3000/api/test", {
     headers: {
-      "x-forwarded-for": `${ip}, 198.51.100.1`,
+      "x-forwarded-for": `${untrusted}, ${ip}`,
     },
   });
 }
@@ -90,5 +90,33 @@ describe("rate limit helper", () => {
 
     expect(response).toBeNull();
     expect(mockCreateClient).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for protected mutations when Redis is unavailable", async () => {
+    delete process.env.REDIS_URL;
+    const { enforceRateLimit } = await import("@/lib/rate-limit");
+
+    const response = await enforceRateLimit(makeRequest(), {
+      scope: "api:test",
+      failClosed: true,
+    });
+
+    expect(response?.status).toBe(503);
+    expect(response?.headers.get("Retry-After")).toBe("5");
+  });
+
+  it("ignores spoofed addresses before the trusted proxy hop", async () => {
+    const { enforceRateLimit } = await import("@/lib/rate-limit");
+
+    await enforceRateLimit(makeRequest("203.0.113.7", "198.51.100.1"), {
+      scope: "api:test",
+    });
+    await enforceRateLimit(makeRequest("203.0.113.7", "198.51.100.2"), {
+      scope: "api:test",
+    });
+
+    const firstKey = mockRedisClient.sendCommand.mock.calls[0][0][3];
+    const secondKey = mockRedisClient.sendCommand.mock.calls[1][0][3];
+    expect(firstKey).toBe(secondKey);
   });
 });

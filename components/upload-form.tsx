@@ -23,7 +23,6 @@ const formSchema = z.object({
 
 type UploadImageResult = {
   id: string;
-  key: string;
 };
 
 type UploadVariables = {

@@ -153,7 +153,10 @@ export function itemBucketKey(segment: string, auctionetId: number) {
 }
 
 /** Maps a local catalog file to its durable bucket key. */
-export function localPathToBucketKey(localPath: string, localRoot = LOCAL_CATALOG_ROOT) {
+export function localPathToBucketKey(
+  localPath: string,
+  localRoot = LOCAL_CATALOG_ROOT,
+) {
   const absoluteLocal = path.resolve(localPath);
   const absoluteRoot = path.resolve(localRoot);
   const relative = path.relative(absoluteRoot, absoluteLocal);
@@ -165,14 +168,31 @@ export function localPathToBucketKey(localPath: string, localRoot = LOCAL_CATALO
   return `${CATALOG_BUCKET_PREFIX}/${relative.split(path.sep).join("/")}`;
 }
 
-export function bucketKeyToLocalPath(key: string, localRoot = LOCAL_CATALOG_ROOT) {
+export function bucketKeyToLocalPath(
+  key: string,
+  localRoot = LOCAL_CATALOG_ROOT,
+) {
   const prefix = `${CATALOG_BUCKET_PREFIX}/`;
 
   if (!key.startsWith(prefix)) {
-    throw new Error(`${key} is outside catalog bucket prefix ${CATALOG_BUCKET_PREFIX}`);
+    throw new Error(
+      `${key} is outside catalog bucket prefix ${CATALOG_BUCKET_PREFIX}`,
+    );
   }
 
-  return path.join(localRoot, ...key.slice(prefix.length).split("/"));
+  const localPath = path.join(
+    localRoot,
+    ...key.slice(prefix.length).split("/"),
+  );
+  const relative = path.relative(
+    path.resolve(localRoot),
+    path.resolve(localPath),
+  );
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`${key} is outside catalog root ${localRoot}`);
+  }
+
+  return localPath;
 }
 
 export function getPointId(auctionetId: number, imageIndex: number) {
@@ -213,7 +233,9 @@ export function parseCatalogCategories(
     const url = trimmed.slice(separator + 1).trim();
 
     if (!url) {
-      throw new Error(`CATALOG_CATEGORIES entry for ${segment} is missing a URL`);
+      throw new Error(
+        `CATALOG_CATEGORIES entry for ${segment} is missing a URL`,
+      );
     }
 
     return { segment, url };

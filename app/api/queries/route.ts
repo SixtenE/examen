@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { trackServerError, withSpan } from "@/lib/telemetry";
+import { getQueryOwnerId } from "@/lib/query-owner";
+import { isUuid } from "@/lib/utils";
 
 const DEFAULT_LIMIT = 12;
 const MAX_LIMIT = 50;
@@ -25,6 +27,7 @@ function decodeCursor(value: string): QueryCursor | null {
     if (
       typeof parsed.createdAt !== "string" ||
       typeof parsed.id !== "string" ||
+      !isUuid(parsed.id) ||
       Number.isNaN(Date.parse(parsed.createdAt))
     ) {
       return null;
@@ -44,6 +47,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const ownerId = getQueryOwnerId(request);
+    if (!ownerId) {
+      return NextResponse.json({ items: [], nextCursor: null });
+    }
+
     const { searchParams } = request.nextUrl;
     const limitParam = Number.parseInt(searchParams.get("limit") ?? "", 10);
     const limit = Number.isNaN(limitParam)
@@ -64,18 +72,26 @@ export async function GET(request: NextRequest) {
       { page_size: limit, has_cursor: Boolean(cursor) },
       () =>
         db
-          .select()
+          .select({
+            id: queries.id,
+            title: queries.title,
+            status: queries.status,
+            createdAt: queries.createdAt,
+          })
           .from(queries)
           .where(
-            cursor && cursorDate
-              ? or(
-                  lt(queries.createdAt, cursorDate),
-                  and(
-                    eq(queries.createdAt, cursorDate),
-                    lt(queries.id, cursor.id),
-                  ),
-                )
-              : undefined,
+            and(
+              eq(queries.owner_id, ownerId),
+              cursor && cursorDate
+                ? or(
+                    lt(queries.createdAt, cursorDate),
+                    and(
+                      eq(queries.createdAt, cursorDate),
+                      lt(queries.id, cursor.id),
+                    ),
+                  )
+                : undefined,
+            ),
           )
           .orderBy(desc(queries.createdAt), desc(queries.id))
           .limit(limit + 1),
