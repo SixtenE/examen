@@ -31,8 +31,7 @@ const queriesInfiniteOptions = infiniteQueryOptions({
   },
   initialPageParam: undefined as string | undefined,
   getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-  retry: (failureCount, error) =>
-    !isRateLimitError(error) && failureCount < 3,
+  retry: (failureCount, error) => !isRateLimitError(error) && failureCount < 3,
 });
 
 function QueryCardSkeleton() {

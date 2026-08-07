@@ -11,6 +11,7 @@ import { and, eq, ne } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { isUuid } from "@/lib/utils";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { trackServerError, trackServerEvent, withSpan } from "@/lib/telemetry";
 
 const SEARCH_LIMIT_PER_COLLECTION = 128;
 const MATCH_LIMIT = 32;
@@ -59,16 +60,19 @@ export async function GET(
   }
 
   try {
-    const [query] = await db.select().from(queries).where(eq(queries.id, id));
+    const [query] = await withSpan(
+      "db.get_query_for_matches",
+      { query_id: id },
+      () => db.select().from(queries).where(eq(queries.id, id)),
+    );
 
     if (!query) {
       return Response.json({ error: "Query not found" }, { status: 404 });
     }
 
-    const results = await db
-      .select()
-      .from(matches)
-      .where(eq(matches.query_id, id));
+    const results = await withSpan("db.list_matches", { query_id: id }, () =>
+      db.select().from(matches).where(eq(matches.query_id, id)),
+    );
 
     const uniqueResults = [
       ...results
@@ -83,7 +87,8 @@ export async function GET(
     ].sort(compareByRankScore);
 
     return Response.json(uniqueResults);
-  } catch {
+  } catch (error) {
+    trackServerError(request, error, "matches_fetch", { query_id: id });
     return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }
@@ -92,6 +97,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const startedAt = performance.now();
   const rateLimitResponse = await enforceRateLimit(request, {
     scope: "api:queries:id:matches:post",
   });
@@ -109,17 +115,23 @@ export async function POST(
     // Atomically claim the query for generation: only one caller can flip a
     // non-processing query to "processing", so concurrent loads can't both run
     // the (expensive) embed + search.
-    const [claimed] = await db
-      .update(queries)
-      .set({ status: "processing" })
-      .where(and(eq(queries.id, id), ne(queries.status, "processing")))
-      .returning();
+    const [claimed] = await withSpan(
+      "db.claim_match_generation",
+      { query_id: id },
+      () =>
+        db
+          .update(queries)
+          .set({ status: "processing" })
+          .where(and(eq(queries.id, id), ne(queries.status, "processing")))
+          .returning(),
+    );
 
     if (!claimed) {
-      const [existing] = await db
-        .select()
-        .from(queries)
-        .where(eq(queries.id, id));
+      const [existing] = await withSpan(
+        "db.get_match_generation_status",
+        { query_id: id },
+        () => db.select().from(queries).where(eq(queries.id, id)),
+      );
 
       if (!existing) {
         return Response.json({ error: "Query not found" }, { status: 404 });
@@ -139,17 +151,31 @@ export async function POST(
       { expiresIn: 60 * 5 },
     );
 
-    const vector = await embedImageUrl(imageUrl);
+    const vector = await withSpan(
+      "search.embed_query_image",
+      { query_id: id },
+      () => embedImageUrl(imageUrl),
+    );
 
     const searchResults = (
-      await Promise.all(
-        REFERENCE_COLLECTIONS.map((collection) =>
-          qdrantClient.search(collection, {
-            vector,
-            limit: SEARCH_LIMIT_PER_COLLECTION,
-            with_payload: true,
-          }),
-        ),
+      await withSpan(
+        "search.query_reference_collections",
+        {
+          query_id: id,
+          collection_count: REFERENCE_COLLECTIONS.length,
+          limit_per_collection: SEARCH_LIMIT_PER_COLLECTION,
+          embedding_dimensions: vector.length,
+        },
+        () =>
+          Promise.all(
+            REFERENCE_COLLECTIONS.map((collection) =>
+              qdrantClient.search(collection, {
+                vector,
+                limit: SEARCH_LIMIT_PER_COLLECTION,
+                with_payload: true,
+              }),
+            ),
+          ),
       )
     ).flat() as ReferenceSearchHit[];
 
@@ -187,36 +213,57 @@ export async function POST(
       .sort(compareByRankScore)
       .slice(0, MATCH_LIMIT);
 
-    const persisted = await db.transaction(async (tx) => {
-      await tx.delete(matches).where(eq(matches.query_id, id));
+    const persisted = await withSpan(
+      "db.persist_matches",
+      { query_id: id, match_count: uniqueRows.length },
+      () =>
+        db.transaction(async (tx) => {
+          await tx.delete(matches).where(eq(matches.query_id, id));
 
-      if (uniqueRows.length === 0) {
-        return [];
-      }
+          if (uniqueRows.length === 0) {
+            return [];
+          }
 
-      return tx.insert(matches).values(uniqueRows).returning();
+          return tx.insert(matches).values(uniqueRows).returning();
+        }),
+    );
+
+    await withSpan("db.mark_query_ready", { query_id: id }, () =>
+      db.update(queries).set({ status: "ready" }).where(eq(queries.id, id)),
+    );
+
+    trackServerEvent(request, "match_generation_completed", {
+      query_id: id,
+      candidate_count: searchResults.length,
+      match_count: persisted.length,
+      embedding_dimensions: vector.length,
+      top_similarity_score: uniqueRows[0]?.similarity_score,
+      duration_ms: Math.round(performance.now() - startedAt),
     });
-
-    await db.update(queries).set({ status: "ready" }).where(eq(queries.id, id));
 
     return Response.json(persisted);
   } catch (error) {
-    console.error("matches route error:", error);
+    trackServerError(request, error, "match_generation", {
+      query_id: id,
+      duration_ms: Math.round(performance.now() - startedAt),
+    });
 
     // Best-effort: mark the query failed so the page can surface a retry
     // instead of being stuck on "processing".
     try {
-      await db
-        .update(queries)
-        .set({ status: "failed" })
-        .where(eq(queries.id, id));
+      await withSpan("db.mark_query_failed", { query_id: id }, () =>
+        db.update(queries).set({ status: "failed" }).where(eq(queries.id, id)),
+      );
     } catch (statusError) {
-      console.error("matches route status update error:", statusError);
+      trackServerError(request, statusError, "query_status_update", {
+        query_id: id,
+        target_status: "failed",
+      });
     }
 
     return Response.json(
       {
-        error: error instanceof Error ? error.message : "Internal server error",
+        error: "Match generation failed",
       },
       { status: 500 },
     );

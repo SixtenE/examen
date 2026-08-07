@@ -7,6 +7,7 @@ import { s3Client } from "@/lib/s3";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { isUuid } from "@/lib/utils";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { trackServerError, trackServerEvent, withSpan } from "@/lib/telemetry";
 
 export async function GET(
   request: NextRequest,
@@ -26,25 +27,33 @@ export async function GET(
   }
 
   try {
-    const [query] = await db.select().from(queries).where(eq(queries.id, id));
+    const [query] = await withSpan("db.get_query", { query_id: id }, () =>
+      db.select().from(queries).where(eq(queries.id, id)),
+    );
 
     if (!query) {
       return Response.json({ error: "Query not found" }, { status: 404 });
     }
 
-    const image_url = await getSignedUrl(
-      s3Client,
-      new GetObjectCommand({
-        Bucket: process.env.AWS_BUCKET_NAME,
-        Key: query.image_key,
-      }),
-      {
-        expiresIn: 60 * 60, // 1 hour
-      },
+    const image_url = await withSpan(
+      "storage.sign_query_image",
+      { query_id: id },
+      () =>
+        getSignedUrl(
+          s3Client,
+          new GetObjectCommand({
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: query.image_key,
+          }),
+          {
+            expiresIn: 60 * 60, // 1 hour
+          },
+        ),
     );
 
     return Response.json({ ...query, image_url });
-  } catch {
+  } catch (error) {
+    trackServerError(request, error, "query_fetch", { query_id: id });
     return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }
@@ -53,6 +62,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const startedAt = performance.now();
   const rateLimitResponse = await enforceRateLimit(request, {
     scope: "api:queries:id:delete",
   });
@@ -67,13 +77,24 @@ export async function DELETE(
   }
 
   try {
-    await db.transaction(async (tx) => {
-      await tx.delete(matches).where(eq(matches.query_id, id));
-      await tx.delete(queries).where(eq(queries.id, id));
+    await withSpan("db.delete_query", { query_id: id }, () =>
+      db.transaction(async (tx) => {
+        await tx.delete(matches).where(eq(matches.query_id, id));
+        await tx.delete(queries).where(eq(queries.id, id));
+      }),
+    );
+
+    trackServerEvent(request, "query_deleted", {
+      query_id: id,
+      duration_ms: Math.round(performance.now() - startedAt),
     });
 
     return Response.json({ message: "Query deleted" }, { status: 200 });
-  } catch {
+  } catch (error) {
+    trackServerError(request, error, "query_delete", {
+      query_id: id,
+      duration_ms: Math.round(performance.now() - startedAt),
+    });
     return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }

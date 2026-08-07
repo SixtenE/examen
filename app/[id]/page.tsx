@@ -23,6 +23,7 @@ import {
   throwApiError,
 } from "@/lib/api-errors";
 import { toast } from "sonner";
+import posthog from "posthog-js";
 
 const MATCH_SKELETON_COUNT = 9;
 
@@ -207,7 +208,7 @@ export default function Page() {
               height={1500}
               sizes="(max-width: 640px) 100vw, 33vw"
               priority
-              className="bg-muted aspect-square h-auto w-full rounded-lg object-cover"
+              className="ph-no-capture bg-muted aspect-square h-auto w-full rounded-lg object-cover"
             />
           ) : (
             <div className="bg-muted aspect-square h-auto w-full animate-pulse rounded-lg object-cover" />
@@ -242,6 +243,16 @@ export default function Page() {
                     href={`https://www.auctionet.com/${match.auctionet_id}`}
                     target="_blank"
                     className="bg-card flex h-28 w-full rounded-4xl"
+                    onClick={() =>
+                      posthog.capture("reference_opened", {
+                        query_id: id,
+                        auctionet_id: match.auctionet_id,
+                        rank: index + 1,
+                        similarity_score: match.similarity_score,
+                        price: match.price,
+                        currency: match.currency,
+                      })
+                    }
                   >
                     <Image
                       src={match.image_url}

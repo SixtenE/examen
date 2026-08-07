@@ -9,6 +9,8 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { RotateCcw } from "lucide-react";
+import { useEffect } from "react";
+import posthog from "posthog-js";
 
 export default function Error({
   error,
@@ -17,6 +19,13 @@ export default function Error({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    posthog.captureException(error, {
+      operation: "react_error_boundary",
+      digest: error.digest,
+    });
+  }, [error]);
+
   return (
     <main className="container mx-auto flex h-screen items-center justify-center">
       <Empty>
