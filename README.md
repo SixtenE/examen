@@ -10,7 +10,7 @@ Built as a full-stack thesis project—from data collection and embedding pipeli
 
 - Built an end-to-end image retrieval pipeline: scrape, normalize, embed, index, search, and rank.
 - Designed semantic image search with 3072-dimensional Gemini embeddings and cosine similarity in Qdrant.
-- Separated storage by responsibility: vectors in Qdrant, application state in Postgres, and user uploads in S3.
+- Separated storage by responsibility: vectors in Qdrant, application state in Postgres, user uploads and catalog intermediates in S3.
 - Preserved historical match metadata in Postgres so results remain stable if the source catalog changes.
 - Documented consequential design choices as [architecture decision records](./docs/adr/).
 
@@ -42,7 +42,7 @@ flowchart LR
   C --> H
 ```
 
-Reference images remain on Auctionet's CDN. Only user uploads are stored in S3, avoiding duplicate media storage.
+Reference images remain on Auctionet's CDN. S3 stores user Query uploads plus catalog intermediates (Auctionet Item JSON and Vector Artifacts under `scrape/`), not duplicate Reference media.
 
 ## Run locally
 
@@ -72,6 +72,7 @@ Open [localhost:3000](http://localhost:3000).
 DATABASE_URL=postgresql://...
 REDIS_URL=redis://...
 QDRANT_URL=https://...
+QDRANT_API_KEY=...
 OPENROUTER_API_KEY=...
 AWS_REGION=...
 AWS_ACCESS_KEY_ID=...
@@ -79,6 +80,7 @@ AWS_SECRET_ACCESS_KEY=...
 AWS_BUCKET_NAME=...
 # Optional for Railway Buckets / other S3-compatible stores:
 # AWS_ENDPOINT_URL=https://storage.railway.app
+# AWS_FORCE_PATH_STYLE=true
 
 # PostHog product analytics, error tracking, logs, and traces:
 NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=phc_...

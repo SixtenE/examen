@@ -4,7 +4,7 @@ Uploading a Query returns immediately after the bytes land in S3 and the row is 
 
 ## Current implementation
 
-The trigger pattern (upload form fire-and-forget + page fallback POST) is implemented. The detail page currently lives at `/:id`, polls Matches only every 500ms, and does not refetch Query status — so a `ready` Query with zero Matches may poll indefinitely.
+The trigger pattern (upload form fire-and-forget + page fallback POST) is implemented. The detail page currently lives at `/:id`, polls Matches every 2s while the list is empty, and does not refetch Query status — so a `ready` Query with zero Matches may poll indefinitely.
 
 ## Target behavior
 

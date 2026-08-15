@@ -4,11 +4,11 @@ status: proposed
 
 # Item-level Match granularity with generation-time snapshots
 
-Match generation produces at most one Match per Auctionet Item. When an item has multiple Reference images, only the highest-scoring image is kept. Each Match stores a snapshot of the item's metadata at generation time — title, image URL, Realized Price, currency, Auctionet ID, and similarity score — so revisiting a past Query shows the same results even if the catalog is later re-scraped or re-seeded. Realized Price is nullable when extraction fails; zero must never represent "unknown". The Catalog includes only sold Auctionet Items; sold items with unparseable prices remain searchable with a missing Realized Price.
+Match generation produces at most one Match per Auctionet Item. When an item has multiple Reference images, only the highest-scoring image is kept. Each Match stores a snapshot of the item's metadata at generation time — title, image URL, Realized Price, currency, Auctionet ID, Sold At, and similarity score — so revisiting a past Query shows the same results even if the catalog is later re-scraped or re-seeded. Realized Price is nullable when extraction fails; zero must never represent "unknown". The Catalog includes only sold Auctionet Items; sold items with unparseable prices remain searchable with a missing Realized Price.
 
 ## Current implementation
 
-Item-level deduplication and generation-time metadata snapshots are implemented. Missing prices are stored as `0` instead of null in Match rows. The embed and seed scripts skip non-sold items; the seed script seeds sold items with a null Realized Price when price extraction fails. The scraper does not yet filter to sold items only.
+Item-level deduplication and generation-time metadata snapshots (including Sold At) are implemented. Missing prices are stored as `0` instead of null in Match rows. The embed and upsert scripts skip non-sold items; the upsert script seeds sold items with a null Realized Price when price extraction fails. The scraper does not yet filter to sold items only.
 
 ## Target behavior
 
