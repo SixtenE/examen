@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cn, isUuid, relativeTimeUntilNow } from "@/lib/utils";
+import { cn, isQueryImageKey, isUuid, relativeTimeUntilNow } from "@/lib/utils";
 
 describe("isUuid", () => {
   it("accepts valid UUIDs", () => {
@@ -11,6 +11,15 @@ describe("isUuid", () => {
     expect(isUuid("not-a-uuid")).toBe(false);
     expect(isUuid("550e8400-e29b-41d4-a716")).toBe(false);
     expect(isUuid("")).toBe(false);
+  });
+});
+
+describe("isQueryImageKey", () => {
+  it("accepts nanoid keys and rejects catalog or traversal keys", () => {
+    expect(isQueryImageKey("V1StGXR8_Z5jdHi6B-myT")).toBe(true);
+    expect(isQueryImageKey("scrape/9-ceramics-porcelain/123.json")).toBe(false);
+    expect(isQueryImageKey("../secret")).toBe(false);
+    expect(isQueryImageKey("img-key")).toBe(false);
   });
 });
 

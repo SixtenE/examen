@@ -6,6 +6,11 @@ export function isUuid(value: string): boolean {
   return z.uuid().safeParse(value).success;
 }
 
+/** Server-generated Query image Keys are nanoids — never slash-prefixed catalog paths. */
+export function isQueryImageKey(value: string): boolean {
+  return /^[A-Za-z0-9_-]{16,32}$/.test(value);
+}
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }

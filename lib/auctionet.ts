@@ -13,6 +13,10 @@ export const AUCTIONET_USER_AGENT =
   "Mozilla/5.0 (compatible; ExamenAuctionetScraper/1.0; +https://auctionet.com)";
 
 const AUCTIONET_HOSTS = new Set(["auctionet.com", "www.auctionet.com"]);
+const AUCTIONET_IMAGE_HOST = "images.auctionet.com";
+const AUCTIONET_CATALOG_ID = /^\d{1,12}$/;
+const AUCTIONET_CURRENCY = /^[A-Z]{3}$/;
+const MAX_MATCH_TITLE_LENGTH = 500;
 
 export function decodeHtmlAttribute(value: string) {
   return value
@@ -55,6 +59,74 @@ export function stripHtmlTags(value: string) {
   return decodeHtmlText(value.replaceAll(/<[^>]+>/g, " "))
     .replaceAll(/\s+/g, " ")
     .trim();
+}
+
+export function isAuctionetCatalogId(value: string) {
+  return AUCTIONET_CATALOG_ID.test(value);
+}
+
+export function isAuctionetImageUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === AUCTIONET_IMAGE_HOST &&
+      url.username === "" &&
+      url.password === "" &&
+      url.pathname.startsWith("/uploads/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function sanitizeMatchPayload(
+  payload:
+    | {
+        auctionet_id?: unknown;
+        image_url?: unknown;
+        title?: unknown;
+        price?: unknown;
+        currency?: unknown;
+      }
+    | null
+    | undefined,
+) {
+  if (!payload) {
+    return null;
+  }
+
+  if (
+    typeof payload.auctionet_id !== "string" ||
+    !isAuctionetCatalogId(payload.auctionet_id)
+  ) {
+    return null;
+  }
+
+  if (
+    typeof payload.image_url !== "string" ||
+    !isAuctionetImageUrl(payload.image_url)
+  ) {
+    return null;
+  }
+
+  return {
+    auctionet_id: payload.auctionet_id,
+    image_url: payload.image_url,
+    title:
+      typeof payload.title === "string"
+        ? payload.title.slice(0, MAX_MATCH_TITLE_LENGTH)
+        : "",
+    price:
+      typeof payload.price === "number" && Number.isFinite(payload.price)
+        ? payload.price
+        : 0,
+    currency:
+      typeof payload.currency === "string" &&
+      AUCTIONET_CURRENCY.test(payload.currency)
+        ? payload.currency
+        : "",
+  };
 }
 
 export function normalizeAuctionetUrl(value: unknown, fieldName = "url") {

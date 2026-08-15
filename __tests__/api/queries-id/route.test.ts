@@ -35,7 +35,7 @@ describe("GET /api/queries/[id]", () => {
             {
               id: QUERY_ID,
               title: "Golden Clock",
-              image_key: "img-key",
+              image_key: "V1StGXR8_Z5jdHi6B-myT",
               status: "ready",
               createdAt: new Date("2026-06-11T10:00:00Z"),
             },
@@ -100,6 +100,31 @@ describe("GET /api/queries/[id]", () => {
 
     expect(response.status).toBe(404);
   });
+
+  it("does not sign catalog object keys", async () => {
+    vi.doMock("@/db", () => {
+      const mockDb = createDbMock({
+        selectResults: [
+          [
+            {
+              id: QUERY_ID,
+              title: "Golden Clock",
+              image_key: "scrape/9-ceramics-porcelain/123/123.json",
+              status: "ready",
+              createdAt: new Date("2026-06-11T10:00:00Z"),
+            },
+          ],
+        ],
+      });
+      return { db: mockDb.db };
+    });
+
+    const { GET } = await import("@/app/api/queries/[id]/route");
+    const response = await GET(makeRequest(), { params });
+
+    expect(response.status).toBe(500);
+    expect(mockGetSignedUrl).not.toHaveBeenCalled();
+  });
 });
 
 describe("DELETE /api/queries/[id]", () => {
@@ -116,7 +141,7 @@ describe("DELETE /api/queries/[id]", () => {
             {
               id: QUERY_ID,
               title: "Golden Clock",
-              image_key: "img-key",
+              image_key: "V1StGXR8_Z5jdHi6B-myT",
               status: "ready",
               createdAt: new Date("2026-06-11T10:00:00Z"),
             },
@@ -153,5 +178,30 @@ describe("DELETE /api/queries/[id]", () => {
     });
 
     expect(response.status).toBe(404);
+  });
+
+  it("does not delete catalog objects from a tainted image key", async () => {
+    vi.doMock("@/db", () => {
+      const mockDb = createDbMock({
+        selectResults: [
+          [
+            {
+              id: QUERY_ID,
+              title: "Golden Clock",
+              image_key: "scrape/9-ceramics-porcelain/123/123.json",
+              status: "ready",
+              createdAt: new Date("2026-06-11T10:00:00Z"),
+            },
+          ],
+        ],
+      });
+      return { db: mockDb.db };
+    });
+
+    const { DELETE } = await import("@/app/api/queries/[id]/route");
+    const response = await DELETE(makeRequest("DELETE"), { params });
+
+    expect(response.status).toBe(500);
+    expect(mockS3Send).not.toHaveBeenCalled();
   });
 });

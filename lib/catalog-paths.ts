@@ -1,4 +1,5 @@
 import path from "node:path";
+import { normalizeAuctionetUrl } from "@/lib/auctionet";
 
 export const CATALOG_BUCKET_PREFIX = "scrape";
 export const LOCAL_CATALOG_ROOT = "data/auctionet/items";
@@ -14,7 +15,9 @@ export type CatalogCategory = {
   url: string;
 };
 
-export function parsePipelineStages(value: string | undefined): Set<PipelineStage> {
+export function parsePipelineStages(
+  value: string | undefined,
+): Set<PipelineStage> {
   if (!value?.trim()) {
     return new Set(PIPELINE_STAGES);
   }
@@ -112,7 +115,8 @@ export function referenceCollection(segment: string) {
   return `references-${assertCategorySegment(segment)}`;
 }
 
-export const REFERENCE_COLLECTIONS = AUCTIONET_LEAF_CATEGORIES.map(referenceCollection);
+export const REFERENCE_COLLECTIONS =
+  AUCTIONET_LEAF_CATEGORIES.map(referenceCollection);
 
 export function categoryItemsDir(segment: string, root = LOCAL_CATALOG_ROOT) {
   return path.join(root, assertCategorySegment(segment));
@@ -230,13 +234,10 @@ export function parseCatalogCategories(
     }
 
     const segment = assertCategorySegment(trimmed.slice(0, separator).trim());
-    const url = trimmed.slice(separator + 1).trim();
-
-    if (!url) {
-      throw new Error(
-        `CATALOG_CATEGORIES entry for ${segment} is missing a URL`,
-      );
-    }
+    const url = normalizeAuctionetUrl(
+      trimmed.slice(separator + 1).trim(),
+      `CATALOG_CATEGORIES:${segment}`,
+    ).toString();
 
     return { segment, url };
   });
