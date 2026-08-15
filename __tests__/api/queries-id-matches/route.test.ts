@@ -5,6 +5,7 @@ import { createDbMock } from "../../helpers/mock-db";
 
 const QUERY_ID = "550e8400-e29b-41d4-a716-446655440000";
 const OWNER_ID = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+const IMAGE_KEY = "V1StGXR8_Z5jdHi6B-myT";
 const params = Promise.resolve({ id: QUERY_ID });
 
 const mockGetSignedUrl = vi
@@ -31,18 +32,20 @@ function hit(
   auctionetId: string,
   score: number,
   soldAt: number | null = MONTH_AGO_UNIX,
+  extra: Record<string, unknown> = {},
 ) {
   return {
     score,
     payload: {
       auctionet_id: auctionetId,
       image_index: 0,
-      image_url: `https://example.com/${auctionetId}.jpg`,
+      image_url: `https://images.auctionet.com/uploads/item_${auctionetId}_0.jpg`,
       title: auctionetId,
       price: 100,
       currency: "SEK",
       source_url: `https://www.auctionet.com/${auctionetId}`,
       sold_at: soldAt,
+      ...extra,
     },
   };
 }
@@ -67,7 +70,7 @@ describe("GET /api/queries/[id]/matches", () => {
             {
               id: QUERY_ID,
               title: "Golden Clock",
-              image_key: "img-key",
+              image_key: IMAGE_KEY,
               status: "ready",
               createdAt: new Date("2026-06-11T10:00:00Z"),
             },
@@ -76,8 +79,8 @@ describe("GET /api/queries/[id]/matches", () => {
             {
               id: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
               query_id: QUERY_ID,
-              auctionet_id: "lot-1",
-              image_url: "https://example.com/a.jpg",
+              auctionet_id: "1001",
+              image_url: "https://images.auctionet.com/uploads/item_1001_0.jpg",
               title: "Similar vase",
               price: 100,
               currency: "SEK",
@@ -88,8 +91,8 @@ describe("GET /api/queries/[id]/matches", () => {
             {
               id: "6ba7b811-9dad-11d1-80b4-00c04fd430c9",
               query_id: QUERY_ID,
-              auctionet_id: "lot-1",
-              image_url: "https://example.com/b.jpg",
+              auctionet_id: "1001",
+              image_url: "https://images.auctionet.com/uploads/item_1001_1.jpg",
               title: "Similar vase duplicate",
               price: 100,
               currency: "SEK",
@@ -100,14 +103,26 @@ describe("GET /api/queries/[id]/matches", () => {
             {
               id: "6ba7b812-9dad-11d1-80b4-00c04fd430ca",
               query_id: QUERY_ID,
-              auctionet_id: "lot-2",
-              image_url: "https://example.com/c.jpg",
+              auctionet_id: "1002",
+              image_url: "https://images.auctionet.com/uploads/item_1002_0.jpg",
               title: "Recent vase",
               price: 120,
               currency: "SEK",
               similarity_score: 0.85,
               sold_at: new Date("2026-06-24T12:00:00Z"),
               createdAt: new Date("2026-06-11T10:06:00Z"),
+            },
+            {
+              id: "6ba7b813-9dad-11d1-80b4-00c04fd430cb",
+              query_id: QUERY_ID,
+              auctionet_id: "javascript:alert(1)",
+              image_url: "javascript:alert(1)",
+              title: "<script>alert(1)</script>",
+              price: 1,
+              currency: "SEK",
+              similarity_score: 0.99,
+              sold_at: new Date("2026-06-24T12:00:00Z"),
+              createdAt: new Date("2026-06-11T10:07:00Z"),
             },
           ],
         ],
@@ -135,9 +150,9 @@ describe("GET /api/queries/[id]/matches", () => {
 
     expect(response.status).toBe(200);
     expect(body).toHaveLength(2);
-    expect(body[0].auctionet_id).toBe("lot-2");
+    expect(body[0].auctionet_id).toBe("1002");
     expect(body[0].similarity_score).toBe(0.85);
-    expect(body[1].auctionet_id).toBe("lot-1");
+    expect(body[1].auctionet_id).toBe("1001");
     expect(body[1].similarity_score).toBe(0.92);
   });
 
@@ -169,25 +184,19 @@ describe("POST /api/queries/[id]/matches", () => {
     mockSearch.mockImplementation((collection: string) => {
       if (collection === "references-28-paintings") {
         return Promise.resolve([
-          hit("shared-item", 0.95, MONTH_AGO_UNIX),
-          hit("shared-item", 0.8, MONTH_AGO_UNIX),
+          hit("2000", 0.95, MONTH_AGO_UNIX),
+          hit("2000", 0.8, MONTH_AGO_UNIX),
           ...Array.from({ length: 20 }, (_, index) =>
-            hit(
-              `item-${String(index + 2).padStart(3, "0")}`,
-              0.94 - index * 0.01,
-            ),
+            hit(String(index + 2), 0.94 - index * 0.01),
           ),
         ]);
       }
 
       if (collection === "references-9-ceramics-porcelain") {
         return Promise.resolve([
-          hit("shared-item", 0.85, MONTH_AGO_UNIX),
+          hit("2000", 0.85, MONTH_AGO_UNIX),
           ...Array.from({ length: 25 }, (_, index) =>
-            hit(
-              `item-${String(index + 22).padStart(3, "0")}`,
-              0.74 - index * 0.01,
-            ),
+            hit(String(index + 22), 0.74 - index * 0.01),
           ),
         ]);
       }
@@ -222,7 +231,7 @@ describe("POST /api/queries/[id]/matches", () => {
           {
             id: QUERY_ID,
             title: "Golden Clock",
-            image_key: "img-key",
+            image_key: IMAGE_KEY,
             status: "processing",
             createdAt: new Date("2026-06-11T10:00:00Z"),
           },
@@ -274,12 +283,10 @@ describe("POST /api/queries/[id]/matches", () => {
       expect.objectContaining({ limit: 128, with_payload: true }),
     );
     expect(body).toHaveLength(32);
-    expect(body[0].auctionet_id).toBe("shared-item");
+    expect(body[0].auctionet_id).toBe("2000");
     expect(body[0].similarity_score).toBe(0.95);
     expect(
-      body.some(
-        (row: { auctionet_id: string }) => row.auctionet_id === "item-046",
-      ),
+      body.some((row: { auctionet_id: string }) => row.auctionet_id === "46"),
     ).toBe(false);
   });
 
@@ -290,8 +297,8 @@ describe("POST /api/queries/[id]/matches", () => {
     mockSearch.mockImplementation((collection: string) => {
       if (collection === "references-28-paintings") {
         return Promise.resolve([
-          hit("old-high", 0.92, FIVE_YEARS_AGO_UNIX),
-          hit("recent-mid", 0.85, MONTH_AGO_UNIX),
+          hit("3000", 0.92, FIVE_YEARS_AGO_UNIX),
+          hit("3001", 0.85, MONTH_AGO_UNIX),
         ]);
       }
 
@@ -308,9 +315,9 @@ describe("POST /api/queries/[id]/matches", () => {
 
     expect(response.status).toBe(200);
     expect(body).toHaveLength(2);
-    expect(body[0].auctionet_id).toBe("recent-mid");
+    expect(body[0].auctionet_id).toBe("3001");
     expect(body[0].similarity_score).toBe(0.85);
-    expect(body[1].auctionet_id).toBe("old-high");
+    expect(body[1].auctionet_id).toBe("3000");
     expect(body[1].similarity_score).toBe(0.92);
   });
 
@@ -343,5 +350,40 @@ describe("POST /api/queries/[id]/matches", () => {
     await expect(response.json()).resolves.toEqual({
       error: "Internal server error",
     });
+  });
+
+  it("drops Qdrant payloads that are not Auctionet catalog images", async () => {
+    mockSearch.mockImplementation((collection: string) => {
+      if (collection === "references-28-paintings") {
+        return Promise.resolve([
+          hit("4000", 0.9, MONTH_AGO_UNIX),
+          hit("4001", 0.89, MONTH_AGO_UNIX, {
+            image_url: "javascript:alert(1)",
+          }),
+          hit("https://evil.example/x", 0.88, MONTH_AGO_UNIX),
+          hit("4002", 0.87, MONTH_AGO_UNIX, {
+            image_url: "https://evil.example/pixel.jpg",
+          }),
+        ]);
+      }
+
+      if ((REFERENCE_COLLECTIONS as readonly string[]).includes(collection)) {
+        return Promise.resolve([]);
+      }
+
+      return Promise.reject(new Error(`unexpected collection: ${collection}`));
+    });
+
+    const { POST } = await import("@/app/api/queries/[id]/matches/route");
+    const response = await POST(makeRequest("POST"), { params });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual([
+      expect.objectContaining({
+        auctionet_id: "4000",
+        image_url: "https://images.auctionet.com/uploads/item_4000_0.jpg",
+      }),
+    ]);
   });
 });

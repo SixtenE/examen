@@ -5,7 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { s3Client } from "@/lib/s3";
 import { DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
-import { isUuid } from "@/lib/utils";
+import { isQueryImageKey, isUuid } from "@/lib/utils";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { trackServerError, trackServerEvent, withSpan } from "@/lib/telemetry";
 import { getQueryOwnerId } from "@/lib/query-owner";
@@ -50,6 +50,10 @@ export async function GET(
       return Response.json({ error: "Query not found" }, { status: 404 });
     }
 
+    if (!isQueryImageKey(query.image_key)) {
+      return Response.json({ error: "Internal server error" }, { status: 500 });
+    }
+
     const image_url = await withSpan(
       "storage.sign_query_image",
       { query_id: id },
@@ -59,6 +63,9 @@ export async function GET(
           new GetObjectCommand({
             Bucket: process.env.AWS_BUCKET_NAME,
             Key: query.image_key,
+            ResponseContentType: "image/jpeg",
+            ResponseContentDisposition: "inline",
+            ResponseCacheControl: "private, max-age=3600",
           }),
           {
             expiresIn: 60 * 60, // 1 hour
@@ -87,6 +94,7 @@ export async function DELETE(
   const rateLimitResponse = await enforceRateLimit(request, {
     scope: "api:queries:id:delete",
     failClosed: true,
+    limit: 20,
   });
   if (rateLimitResponse) {
     return rateLimitResponse;
@@ -111,6 +119,10 @@ export async function DELETE(
 
     if (!query) {
       return Response.json({ error: "Query not found" }, { status: 404 });
+    }
+
+    if (!isQueryImageKey(query.image_key)) {
+      return Response.json({ error: "Internal server error" }, { status: 500 });
     }
 
     await withSpan("db.delete_query", { query_id: id }, () =>
