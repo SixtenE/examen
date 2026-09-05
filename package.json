@@ -11,6 +11,8 @@
     "scrape": "tsx scripts/scrape.ts",
     "embed": "tsx scripts/embed.ts",
     "upsert": "tsx scripts/upsert.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
     "test": "vitest"
   },
   "dependencies": {
