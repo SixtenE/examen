@@ -112,6 +112,9 @@ pnpm cron -- --stages embed,store --category 9-ceramics-porcelain
 # Embed + store + upsert Qdrant
 pnpm cron -- --stages embed,store,upsert --category 9-ceramics-porcelain
 
+# One-shot: rewrite existing Qdrant payloads (e.g. after adding Sold At). Do not use on scheduled cron.
+pnpm cron -- --stages upsert --force
+
 # Or run individual scripts after local item JSON exists:
 pnpm embed -- \
   --items data/auctionet/items/9-ceramics-porcelain \

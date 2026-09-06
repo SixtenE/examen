@@ -30,6 +30,7 @@ type PipelineMode = "backfill" | "incremental";
 type CliOptions = {
   categories: CatalogCategory[];
   dryRun: boolean;
+  force: boolean;
   stages: Set<PipelineStage>;
   maxPages: number | null;
   maxItems: number | null;
@@ -58,6 +59,7 @@ function usage() {
     "  --discover-leaves          Refresh leaf categories from Auctionet facets",
     `  --company-id <n>           Company for --discover-leaves (default: ${CRAFOORD_STOCKHOLM_COMPANY_ID})`,
     "  --dry-run                  Print planned work without side effects",
+    "  --force                    Forwarded to upsert (rewrite existing Qdrant payloads)",
     "  --max-pages <n>            Forwarded to scrape",
     "  --max-items <n>            Max newly scraped items across categories (skips excluded)",
   ].join("\n");
@@ -88,6 +90,7 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
 } {
   const categoryArgs: string[] = [];
   let dryRun = false;
+  let force = false;
   let stages = parsePipelineStages(undefined);
   let maxPages: number | null = null;
   let maxItems: number | null = null;
@@ -131,6 +134,9 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
       case "--dry-run":
         dryRun = true;
         break;
+      case "--force":
+        force = true;
+        break;
       case "--max-pages":
         maxPages = parsePositiveInteger(readOptionValue(args, index, arg), arg);
         index += 1;
@@ -151,6 +157,7 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
   return {
     categoryArgs,
     dryRun,
+    force,
     stages,
     maxPages,
     maxItems,
@@ -298,7 +305,11 @@ async function artifactAlreadySeeded(
   return records.length === pointIds.length;
 }
 
-async function prepareVectors(category: CatalogCategory, dryRun: boolean) {
+async function prepareVectors(
+  category: CatalogCategory,
+  dryRun: boolean,
+  force: boolean,
+) {
   const { catalogObjectExists, downloadCatalogObject } = await import(
     "../lib/catalog-bucket"
   );
@@ -332,7 +343,13 @@ async function prepareVectors(category: CatalogCategory, dryRun: boolean) {
 
     const pointIds = expectedPointIds(item.auctionet_id, item.image_urls.length);
 
-    if (!dryRun && (await artifactAlreadySeeded(collectionName, pointIds))) {
+    // Without --force, seeded points need no local Vector Artifact for upsert.
+    // With --force, download so upsert can rewrite payloads (e.g. Sold At).
+    if (
+      !force &&
+      !dryRun &&
+      (await artifactAlreadySeeded(collectionName, pointIds))
+    ) {
       alreadyInQdrant += 1;
       console.log(`skip seeded: ${relative}`);
       continue;
@@ -434,7 +451,11 @@ async function runCategory(
   console.log(
     "Preparing Vector Artifacts (skip Qdrant duplicates, reuse bucket vectors)...",
   );
-  const prepared = await prepareVectors(category, options.dryRun);
+  const prepared = await prepareVectors(
+    category,
+    options.dryRun,
+    options.force,
+  );
   console.log(
     `prepare vectors: qdrant-skip ${prepared.alreadyInQdrant}, downloaded ${prepared.downloaded}, pending embed ${prepared.pendingEmbed}, unsold ${prepared.unsold}`,
   );
@@ -479,8 +500,15 @@ async function runCategory(
     if (options.dryRun) {
       upsertArgs.push("--dry-run");
     }
+    if (options.force) {
+      upsertArgs.push("--force");
+    }
 
-    console.log("Upserting Qdrant (skips artifacts whose points already exist)...");
+    console.log(
+      options.force
+        ? "Upserting Qdrant (force: rewriting existing payloads)..."
+        : "Upserting Qdrant (skips artifacts whose points already exist)...",
+    );
     const upsertResult = await runScript(
       "scripts/upsert.ts",
       upsertArgs,
@@ -526,6 +554,7 @@ async function main() {
   const options: CliOptions = {
     categories,
     dryRun: parsed.dryRun,
+    force: parsed.force,
     stages: parsed.stages,
     maxPages: parsed.maxPages,
     maxItems: parsed.maxItems,
