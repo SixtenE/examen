@@ -95,6 +95,15 @@ describe("catalog-paths", () => {
         url: "https://auctionet.com/en/search/9-ceramics-porcelain?is=ended&sort=new",
       },
     ]);
+
+    expect(() =>
+      parseCatalogCategories(
+        "9-ceramics-porcelain|http://127.0.0.1/latest/meta-data/",
+      ),
+    ).toThrow(/Auctionet/);
+    expect(() =>
+      parseCatalogCategories("9-ceramics-porcelain|https://evil.example/x"),
+    ).toThrow(/Auctionet/);
   });
 
   it("defaults to the Auctionet leaf taxonomy with company 232 URLs", () => {
@@ -127,7 +136,9 @@ describe("catalog-paths", () => {
     expect(referenceCollection("9-ceramics-porcelain")).toBe(
       "references-9-ceramics-porcelain",
     );
-    expect(REFERENCE_COLLECTIONS).toHaveLength(AUCTIONET_LEAF_CATEGORIES.length);
+    expect(REFERENCE_COLLECTIONS).toHaveLength(
+      AUCTIONET_LEAF_CATEGORIES.length,
+    );
     expect(REFERENCE_COLLECTIONS).toContain("references-28-paintings");
     expect(REFERENCE_COLLECTIONS).toContain("references-9-ceramics-porcelain");
     expect(REFERENCE_COLLECTIONS).not.toContain("references");
@@ -136,7 +147,12 @@ describe("catalog-paths", () => {
   it("parses pipeline stages", () => {
     expect([...parsePipelineStages(undefined)]).toEqual([...PIPELINE_STAGES]);
     expect([...parsePipelineStages("")]).toEqual([...PIPELINE_STAGES]);
-    expect([...parsePipelineStages("scrape,upsert")]).toEqual(["scrape", "upsert"]);
-    expect(() => parsePipelineStages("scrape,upload")).toThrow(/Unknown pipeline stage/);
+    expect([...parsePipelineStages("scrape,upsert")]).toEqual([
+      "scrape",
+      "upsert",
+    ]);
+    expect(() => parsePipelineStages("scrape,upload")).toThrow(
+      /Unknown pipeline stage/,
+    );
   });
 });

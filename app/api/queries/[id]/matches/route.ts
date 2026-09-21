@@ -9,10 +9,11 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { and, eq, inArray } from "drizzle-orm";
 import type { NextRequest } from "next/server";
-import { isUuid } from "@/lib/utils";
+import { isQueryImageKey, isUuid } from "@/lib/utils";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { trackServerError, trackServerEvent, withSpan } from "@/lib/telemetry";
 import { getQueryOwnerId } from "@/lib/query-owner";
+import { sanitizeMatchPayload } from "@/lib/auctionet";
 
 const SEARCH_LIMIT_PER_COLLECTION = 128;
 const MATCH_LIMIT = 32;
@@ -87,6 +88,10 @@ export async function GET(
     const uniqueResults = [
       ...results
         .reduce((map, row) => {
+          if (!sanitizeMatchPayload(row)) {
+            return map;
+          }
+
           const existing = map.get(row.auctionet_id);
           if (!existing || row.similarity_score > existing.similarity_score) {
             map.set(row.auctionet_id, row);
@@ -111,6 +116,7 @@ export async function POST(
   const rateLimitResponse = await enforceRateLimit(request, {
     scope: "api:queries:id:matches:post",
     failClosed: true,
+    limit: 8,
   });
   if (rateLimitResponse) {
     return rateLimitResponse;
@@ -167,11 +173,18 @@ export async function POST(
 
     const query = claimed;
 
+    if (!isQueryImageKey(query.image_key)) {
+      throw new Error("invalid_image_key");
+    }
+
     const imageUrl = await getSignedUrl(
       s3Client,
       new GetObjectCommand({
         Bucket: process.env.AWS_BUCKET_NAME,
         Key: query.image_key,
+        ResponseContentType: "image/jpeg",
+        ResponseContentDisposition: "inline",
+        ResponseCacheControl: "private, max-age=300",
       }),
       { expiresIn: 60 * 5 },
     );
@@ -207,19 +220,19 @@ export async function POST(
 
     const rows = searchResults
       .map((result) => {
-        const auctionetId = result.payload?.auctionet_id;
-        if (typeof auctionetId !== "string" || auctionetId.length === 0) {
+        const payload = sanitizeMatchPayload(result.payload);
+        if (!payload) {
           return null;
         }
 
         return {
           query_id: id,
-          auctionet_id: auctionetId,
+          auctionet_id: payload.auctionet_id,
           similarity_score: result.score,
-          image_url: result.payload?.image_url ?? "",
-          title: result.payload?.title ?? "",
-          price: result.payload?.price ?? 0,
-          currency: result.payload?.currency ?? "",
+          image_url: payload.image_url,
+          title: payload.title,
+          price: payload.price,
+          currency: payload.currency,
           sold_at: parseSoldAtUnix(result.payload?.sold_at),
         };
       })

@@ -9,6 +9,7 @@ import { s3Client } from "@/lib/s3";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { trackServerError, trackServerEvent, withSpan } from "@/lib/telemetry";
 import { SeverityNumber } from "@opentelemetry/api-logs";
+import { isQueryImageKey } from "@/lib/utils";
 import {
   getOrCreateQueryOwnerId,
   setQueryOwnerCookie,
@@ -17,6 +18,7 @@ import {
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15MB
 const MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024;
 const MAX_INPUT_PIXELS = 64_000_000;
+const HEIC_DECODE_TIMEOUT_MS = 8_000;
 const STORED_MAX_EDGE = 1500;
 const STORED_JPEG_QUALITY = 80;
 const ALLOWED_IMAGE_TYPES = new Set([
@@ -150,6 +152,22 @@ function isHeic(file: File) {
   );
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Timed out")), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 export async function POST(request: NextRequest) {
   const startedAt = performance.now();
   const uploadSourceHeader = request.headers?.get("x-upload-source");
@@ -160,6 +178,7 @@ export async function POST(request: NextRequest) {
   const rateLimitResponse = await enforceRateLimit(request, {
     scope: "api:upload:post",
     failClosed: true,
+    limit: 10,
   });
   if (rateLimitResponse) {
     return rateLimitResponse;
@@ -272,11 +291,14 @@ export async function POST(request: NextRequest) {
         // heic-convert spreads the input internally, so it needs an iterable
         // Buffer/Uint8Array (its bundled @types incorrectly demand ArrayBuffer).
         const jpeg = await withSpan("image.decode_heic", {}, () =>
-          convert({
-            buffer: body as unknown as ArrayBuffer,
-            format: "JPEG",
-            quality: 0.9,
-          }),
+          withTimeout(
+            convert({
+              buffer: body as unknown as ArrayBuffer,
+              format: "JPEG",
+              quality: 0.9,
+            }),
+            HEIC_DECODE_TIMEOUT_MS,
+          ),
         );
         body = Buffer.from(jpeg);
       } catch {
@@ -319,11 +341,17 @@ export async function POST(request: NextRequest) {
 
     const ownerId = getOrCreateQueryOwnerId(request);
     const key = nanoid();
+    if (!isQueryImageKey(key)) {
+      return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+    }
+
     const command = new PutObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: key,
       Body: body,
       ContentType: "image/jpeg",
+      CacheControl: "private, max-age=3600",
+      ContentDisposition: "inline",
     });
 
     await withSpan("storage.upload_image", { stored_bytes: body.length }, () =>
