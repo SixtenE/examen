@@ -10,7 +10,7 @@ export const AUCTIONET_PAGE_ITEM_CAP = 10_000;
 
 export { CRAFOORD_STOCKHOLM_COMPANY_ID };
 
-/** Orders that together cover oversized leaves past the page cap. */
+/** Union archive orders to reach both ends of capped listings; verify coverage afterward. */
 export const ARCHIVE_LISTING_ORDERS = [
   "end_asc_archive",
   "end_desc",
@@ -28,13 +28,8 @@ export type CategoryFacet = {
   companyId: number | null;
 };
 
-export function listingOrdersForSegment(segment: string): string[] {
-  // Paintings for company 232 exceeds the page cap; multi-order fills the gap.
-  if (segment === "28-paintings") {
-    return [...ARCHIVE_LISTING_ORDERS];
-  }
-
-  return [INCREMENTAL_LISTING_ORDER];
+export function archiveListingOrders(): string[] {
+  return [...ARCHIVE_LISTING_ORDERS];
 }
 
 export function withListingOrder(url: URL | string, order: string) {
@@ -54,7 +49,10 @@ function parseCount(raw: string) {
  * Category links from the search facet sidebar (`menu-box`), including nested children.
  * Skips "Any category" (no segment) and other auction-house rows (caller filters company).
  */
-export function extractCategoryFacets(html: string, baseUrl: URL): CategoryFacet[] {
+export function extractCategoryFacets(
+  html: string,
+  baseUrl: URL,
+): CategoryFacet[] {
   const facets: CategoryFacet[] = [];
   const pattern =
     /href="(\/[^"]*\/search\/\d+-[a-z0-9-]+[^"]*)"[^>]*>\s*<span class="menu-box__link__text">([\s\S]*?)<\/span>\s*<span class="menu-box__link__count">\(([^)]+)\)<\/span>/gi;
@@ -89,9 +87,7 @@ export function extractCategoryFacets(html: string, baseUrl: URL): CategoryFacet
 }
 
 export function extractEndedItemCount(html: string) {
-  const match = html.match(
-    /tabs__show-on-small-displays">\(([\d\s\u00a0]+)\)/,
-  );
+  const match = html.match(/tabs__show-on-small-displays">\(([\d\s\u00a0]+)\)/);
   return match ? parseCount(match[1]) : null;
 }
 
@@ -193,5 +189,7 @@ export async function discoverCompanyLeafCategories(options: {
     }
   }
 
-  return leaves.sort((left, right) => left.segment.localeCompare(right.segment));
+  return leaves.sort((left, right) =>
+    left.segment.localeCompare(right.segment),
+  );
 }

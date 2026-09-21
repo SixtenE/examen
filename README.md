@@ -146,7 +146,7 @@ Create **separate** Railway services for cron (do not put schedules on the web a
 pnpm cron -- --dry-run --max-pages 1 --max-items 5
 
 # Scrape-only (same as railway.scrape.toml)
-pnpm cron -- --stages scrape --mode incremental --max-items 500
+pnpm cron -- --stages scrape --mode backfill --max-items 500
 ```
 
 Extra env for the cron services (in addition to the app vars; embed/upsert also need OpenRouter/Qdrant):
@@ -183,3 +183,5 @@ pnpm embed                      # Generate catalog embeddings
 pnpm upsert                     # Upsert References into Qdrant
 pnpm cron                       # Stages: scrape → embed → store → upsert
 ```
+
+The scheduled scrape uses backfill with a 500-new-item budget. Every category is traversed in oldest/newest end-date and ascending/descending estimate order to reach beyond an individual listing’s page cap. Duplicate Auctionet IDs are skipped within the run and existing item objects are skipped in the bucket. Runs restart listings rather than persisting page positions. An uncapped, unbudgeted completion must cover the advertised count; otherwise scraping fails visibly instead of silently accepting an incomplete archive. Sort-order unions cannot guarantee coverage for arbitrarily large categories; such failures require narrower filters.
