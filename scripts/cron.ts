@@ -7,7 +7,7 @@ import path from "node:path";
 import {
   discoverCompanyLeafCategories,
   INCREMENTAL_LISTING_ORDER,
-  listingOrdersForSegment,
+  archiveListingOrders,
 } from "../lib/auctionet-leaves";
 import {
   AUCTIONET_LEAF_CATEGORIES,
@@ -310,9 +310,8 @@ async function prepareVectors(
   dryRun: boolean,
   force: boolean,
 ) {
-  const { catalogObjectExists, downloadCatalogObject } = await import(
-    "../lib/catalog-bucket"
-  );
+  const { catalogObjectExists, downloadCatalogObject } =
+    await import("../lib/catalog-bucket");
   const itemsDir = categoryItemsDir(category.segment);
   const vectorsDir = categoryVectorsDir(category.segment);
   const collectionName = referenceCollection(category.segment);
@@ -341,7 +340,10 @@ async function prepareVectors(
       continue;
     }
 
-    const pointIds = expectedPointIds(item.auctionet_id, item.image_urls.length);
+    const pointIds = expectedPointIds(
+      item.auctionet_id,
+      item.image_urls.length,
+    );
 
     // Without --force, seeded points need no local Vector Artifact for upsert.
     // With --force, download so upsert can rewrite payloads (e.g. Sold At).
@@ -402,10 +404,7 @@ async function runCategory(
         scrapeArgs.push("--orders", INCREMENTAL_LISTING_ORDER);
         scrapeArgs.push("--incremental");
       } else {
-        scrapeArgs.push(
-          "--orders",
-          listingOrdersForSegment(category.segment).join(","),
-        );
+        scrapeArgs.push("--orders", archiveListingOrders().join(","));
       }
 
       console.log(
@@ -438,7 +437,9 @@ async function runCategory(
 
   await mkdir(itemsDir, { recursive: true });
 
-  console.log("Syncing Auctionet Item JSON from bucket (skip existing local)...");
+  console.log(
+    "Syncing Auctionet Item JSON from bucket (skip existing local)...",
+  );
   if (options.dryRun) {
     console.log(`dry-run sync down: ${itemsPrefix}`);
   } else {
@@ -470,11 +471,7 @@ async function runCategory(
     }
 
     console.log("Embedding images (skips existing Vector Artifacts)...");
-    const embedResult = await runScript(
-      "scripts/embed.ts",
-      embedArgs,
-      false,
-    );
+    const embedResult = await runScript("scripts/embed.ts", embedArgs, false);
     if (embedResult.code !== 0) {
       throw new Error(`embed exited with code ${embedResult.code}`);
     }
