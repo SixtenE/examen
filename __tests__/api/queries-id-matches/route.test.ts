@@ -165,6 +165,7 @@ describe("GET /api/queries/[id]/matches", () => {
 describe("POST /api/queries/[id]/matches", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.clearAllMocks();
     mockSearch.mockReset();
     mockSearch.mockImplementation((collection: string) => {
       if (collection === "references-28-paintings") {
@@ -314,24 +315,29 @@ describe("POST /api/queries/[id]/matches", () => {
     expect(body[1].similarity_score).toBe(0.92);
   });
 
-  it("does not regenerate matches for a ready query", async () => {
-    vi.doMock("@/db", () => {
-      const mockDb = createDbMock({
-        updateReturning: [],
-        selectResults: [[{ id: QUERY_ID, status: "ready" }]],
+  it.each(["ready", "processing"])(
+    "does not regenerate matches for a %s query",
+    async (status) => {
+      vi.doMock("@/db", () => {
+        const mockDb = createDbMock({
+          updateReturning: [],
+          selectResults: [[{ id: QUERY_ID, status }]],
+        });
+        return { db: mockDb.db };
       });
-      return { db: mockDb.db };
-    });
 
-    const { POST } = await import("@/app/api/queries/[id]/matches/route");
-    const response = await POST(makeRequest("POST"), { params });
+      const { POST } = await import("@/app/api/queries/[id]/matches/route");
+      const response = await POST(makeRequest("POST"), { params });
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ status: "ready" });
-    expect(mockSearch).not.toHaveBeenCalled();
-  });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ status });
+      expect(mockEmbedImageUrl).not.toHaveBeenCalled();
+      expect(mockSearch).not.toHaveBeenCalled();
+    },
+  );
 
-  it("does not expose upstream error details", async () => {
+  it("marks failed generation as retryable without exposing upstream errors", async () => {
+    const { db } = await import("@/db");
     mockEmbedImageUrl.mockRejectedValueOnce(
       new Error("secret upstream detail"),
     );
@@ -340,6 +346,9 @@ describe("POST /api/queries/[id]/matches", () => {
     const response = await POST(makeRequest("POST"), { params });
 
     expect(response.status).toBe(500);
+    const statusUpdate = vi.mocked(db.update).mock.results.at(-1)?.value;
+    expect(statusUpdate.set).toHaveBeenCalledWith({ status: "failed" });
+    expect(mockSearch).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toEqual({
       error: "Internal server error",
     });
