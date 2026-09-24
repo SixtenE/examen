@@ -63,6 +63,19 @@ it("fails visibly if capped orders leave a gap", async () => {
   );
 });
 
+it("discovers catalogue lots whose listing URL has no Auctionet id", async () => {
+  vi.mocked(fetchAuctionetHtml).mockResolvedValue(
+    page([10001], 2) +
+      '<div data-props="{&quot;items&quot;:[{&quot;id&quot;:1442234,&quot;shortTitle&quot;:&quot;CHANDELIER&quot;,&quot;url&quot;:&quot;/en/events/272-hostkvalite-2020/16-chandelier&quot;}]}"></div>',
+  );
+  const result = stats();
+  await crawlAuctionet({ ...options, orders: ["end_desc"] }, result);
+  expect(result.discovered_item_count).toBe(2);
+  expect(catalogObjectExists).toHaveBeenCalledWith(
+    expect.stringContaining("1442234"),
+  );
+});
+
 it("saves only new lots and permits a budget-limited partial backfill", async () => {
   vi.mocked(fetchAuctionetHtml)
     .mockResolvedValueOnce(page([10001, 10002], 30))
