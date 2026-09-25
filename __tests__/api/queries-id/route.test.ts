@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { NextRequest } from "next/server";
 import { createDbMock } from "../../helpers/mock-db";
 
@@ -135,6 +136,7 @@ describe("DELETE /api/queries/[id]", () => {
   });
 
   it("deletes matches and the query in a transaction", async () => {
+    const { matches, queries } = await import("@/db/schema");
     const { db } = await import("@/db");
     const { DELETE } = await import("@/app/api/queries/[id]/route");
     const response = await DELETE(makeRequest("DELETE"), { params });
@@ -142,8 +144,13 @@ describe("DELETE /api/queries/[id]", () => {
 
     expect(response.status).toBe(200);
     expect(body.message).toBe("Query deleted");
-    expect(db.transaction).toHaveBeenCalled();
-    expect(mockS3Send).toHaveBeenCalled();
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+    expect(db.delete).toHaveBeenNthCalledWith(1, matches);
+    expect(db.delete).toHaveBeenNthCalledWith(2, queries);
+    expect(mockS3Send).toHaveBeenCalledTimes(1);
+    const [command] = mockS3Send.mock.calls[0];
+    expect(command).toBeInstanceOf(DeleteObjectCommand);
+    expect(command.input.Key).toBe("img-key");
   });
 
   it("returns 404 for invalid UUIDs", async () => {
@@ -153,5 +160,37 @@ describe("DELETE /api/queries/[id]", () => {
     });
 
     expect(response.status).toBe(404);
+  });
+
+  it("does not delete image bytes when the database transaction fails", async () => {
+    const { db } = await import("@/db");
+    vi.mocked(db.transaction).mockRejectedValueOnce(
+      new Error("database secret"),
+    );
+    const { DELETE } = await import("@/app/api/queries/[id]/route");
+
+    const response = await DELETE(makeRequest("DELETE"), { params });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "Internal server error",
+    });
+    expect(mockS3Send).not.toHaveBeenCalled();
+  });
+
+  it("rejects deletion without an owner before accessing stored data", async () => {
+    const { db } = await import("@/db");
+    const { DELETE } = await import("@/app/api/queries/[id]/route");
+    const response = await DELETE(
+      new NextRequest(`http://localhost:3000/api/queries/${QUERY_ID}`, {
+        method: "DELETE",
+      }),
+      { params },
+    );
+
+    expect(response.status).toBe(404);
+    expect(db.select).not.toHaveBeenCalled();
+    expect(db.transaction).not.toHaveBeenCalled();
+    expect(mockS3Send).not.toHaveBeenCalled();
   });
 });

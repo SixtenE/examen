@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cn, isUuid, relativeTimeUntilNow } from "@/lib/utils";
+import { isUuid, relativeTimeUntilNow } from "@/lib/utils";
 
 describe("isUuid", () => {
   it("accepts valid UUIDs", () => {
@@ -11,15 +11,6 @@ describe("isUuid", () => {
     expect(isUuid("not-a-uuid")).toBe(false);
     expect(isUuid("550e8400-e29b-41d4-a716")).toBe(false);
     expect(isUuid("")).toBe(false);
-  });
-});
-
-describe("cn", () => {
-  it("merges class names and resolves tailwind conflicts", () => {
-    expect(cn("px-2", "px-4")).toBe("px-4");
-    expect(cn("text-red-500", false && "hidden", "font-bold")).toBe(
-      "text-red-500 font-bold",
-    );
   });
 });
 

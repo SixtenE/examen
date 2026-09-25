@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import type { NextRequest } from "next/server";
 
 const mockS3Send = vi.hoisted(() => vi.fn().mockResolvedValue({}));
@@ -78,7 +79,7 @@ describe("POST /api/upload", () => {
     expect(mockS3Send).not.toHaveBeenCalled();
   });
 
-  it("uploads a valid image and returns id and key", async () => {
+  it("uploads a valid image and returns only its id", async () => {
     const file = new File([new Uint8Array([1, 2, 3])], "photo.png", {
       type: "image/png",
     });
@@ -141,9 +142,51 @@ describe("POST /api/upload", () => {
     expect(body.error).toBe("File too large (max 15MB)");
   });
 
-  it("rejects requests without a content length before parsing", async () => {
-    const response = await POST(makeUploadRequest(null, false));
+  it("removes the uploaded bytes if creating the query fails", async () => {
+    mockInsertReturning.mockRejectedValueOnce(new Error("database secret"));
+    const file = new File(["image"], "photo.png", { type: "image/png" });
 
-    expect(response.status).toBe(411);
+    const response = await POST(makeUploadRequest(file));
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: "Upload failed" });
+    expect(mockS3Send).toHaveBeenCalledTimes(2);
+    const [upload] = mockS3Send.mock.calls[0];
+    const [cleanup] = mockS3Send.mock.calls[1];
+    expect(upload).toBeInstanceOf(PutObjectCommand);
+    expect(cleanup).toBeInstanceOf(DeleteObjectCommand);
+    expect(cleanup.input.Key).toBe(upload.input.Key);
+    expect(response.headers.get("set-cookie")).toBeNull();
   });
+
+  it("does not create a query when storage fails", async () => {
+    mockS3Send.mockRejectedValueOnce(new Error("storage secret"));
+    const file = new File(["image"], "photo.png", { type: "image/png" });
+
+    const response = await POST(makeUploadRequest(file));
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: "Upload failed" });
+    expect(mockInsertValues).not.toHaveBeenCalled();
+    expect(mockS3Send).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [undefined, 411],
+    ["-1", 400],
+    ["invalid", 400],
+    [String(16 * 1024 * 1024 + 1), 413],
+  ])(
+    "rejects Content-Length %s before parsing the body",
+    async (length, status) => {
+      const request = makeUploadRequest(null, false);
+      if (length !== undefined) request.headers.set("content-length", length);
+      const parse = vi.spyOn(request, "formData");
+
+      expect((await POST(request)).status).toBe(status);
+      expect(parse).not.toHaveBeenCalled();
+      expect(mockS3Send).not.toHaveBeenCalled();
+      expect(mockInsertValues).not.toHaveBeenCalled();
+    },
+  );
 });
