@@ -462,7 +462,7 @@ async function runCategory(
   );
 
   if (options.stages.has("embed")) {
-    const embedArgs = ["--items", itemsDir, "--out", vectorsDir];
+    const embedArgs = ["--items", itemsDir, "--out", vectorsDir, "--skip-indexed"];
     if (options.maxItems !== null) {
       embedArgs.push("--max-items", String(options.maxItems));
     }

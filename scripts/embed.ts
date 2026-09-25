@@ -3,6 +3,8 @@ import "dotenv/config";
 import { constants } from "node:fs";
 import { access, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { expectedPointIds, referenceCollection } from "../lib/catalog-paths";
 import { setTimeout as sleep } from "node:timers/promises";
 
 type CliOptions = {
@@ -12,6 +14,7 @@ type CliOptions = {
   delayMs: number;
   maxRetries: number;
   force: boolean;
+  skipIndexed: boolean;
   dryRun: boolean;
   maxItems: number | null;
 };
@@ -68,6 +71,7 @@ function usage() {
     `  --max-retries <n>      Retries for 429/5xx responses (default: ${DEFAULT_MAX_RETRIES})`,
     "  --max-items <n>        Stop after processing n item files",
     "  --force                Regenerate existing vector files",
+    "  --skip-indexed         Skip items already in Qdrant (requires existing collections)",
     "  --dry-run              Print planned work without calling OpenRouter or writing files",
   ].join("\n");
 }
@@ -121,6 +125,7 @@ function parseArgs(args: string[]): CliOptions {
   let delayMs = DEFAULT_DELAY_MS;
   let maxRetries = DEFAULT_MAX_RETRIES;
   let force = false;
+  let skipIndexed = false;
   let dryRun = false;
   let maxItems: number | null = null;
 
@@ -153,6 +158,9 @@ function parseArgs(args: string[]): CliOptions {
       case "--max-items":
         maxItems = parsePositiveInteger(readOptionValue(args, index, arg), arg);
         index += 1;
+        break;
+      case "--skip-indexed":
+        skipIndexed = true;
         break;
       case "--force":
         force = true;
@@ -193,6 +201,7 @@ function parseArgs(args: string[]): CliOptions {
     delayMs,
     maxRetries,
     force,
+    skipIndexed,
     dryRun,
     maxItems,
   };
@@ -427,7 +436,7 @@ async function writeJsonAtomically(filePath: string, value: unknown) {
   await rename(tempPath, filePath);
 }
 
-async function embedItem(
+export async function embedItem(
   itemPath: string,
   outputPath: string,
   options: CliOptions,
@@ -449,6 +458,21 @@ async function embedItem(
   if (options.dryRun) {
     console.log(`embed: ${relativeItemPath} -> ${relativeOutputPath} (${item.image_urls.length} images)`);
     return { imageCount: item.image_urls.length, skipped: false, unsold: false };
+  }
+
+  if (options.skipIndexed && !options.force) {
+    const { qdrantClient } = await import("../lib/qdrant");
+    const ids = expectedPointIds(item.auctionet_id, item.image_urls.length);
+    const records = ids.length === 0
+      ? []
+      : await qdrantClient.retrieve(
+          referenceCollection(categorySegment(options.itemsDir, "--items")),
+          { ids, with_payload: false, with_vector: false },
+        );
+    if (records.length === ids.length) {
+      console.log(`skip indexed: ${relativeItemPath}`);
+      return { imageCount: 0, skipped: true, unsold: false };
+    }
   }
 
   const references: ReferenceVector[] = [];
@@ -546,8 +570,10 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  console.error(usage());
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    console.error(usage());
+    process.exitCode = 1;
+  });
+}
