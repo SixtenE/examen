@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { embedAuctionetVectors, parseArgs as parseEmbedArgs } from "./embed";
 import {
   discoverCompanyLeafCategories,
   INCREMENTAL_LISTING_ORDER,
@@ -34,6 +35,7 @@ type CliOptions = {
   stages: Set<PipelineStage>;
   maxPages: number | null;
   maxItems: number | null;
+  maxEmbedItems: number | null;
   mode: PipelineMode;
   discoverLeaves: boolean;
   companyId: number;
@@ -60,6 +62,7 @@ function usage() {
     `  --company-id <n>           Company for --discover-leaves (default: ${CRAFOORD_STOCKHOLM_COMPANY_ID})`,
     "  --dry-run                  Print planned work without side effects",
     "  --force                    Forwarded to upsert (rewrite existing Qdrant payloads)",
+    "  --max-embed-items <n>      Max new embedding items across all categories",
     "  --max-pages <n>            Forwarded to scrape",
     "  --max-items <n>            Max newly scraped items across categories (skips excluded)",
   ].join("\n");
@@ -94,6 +97,7 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
   let stages = parsePipelineStages(undefined);
   let maxPages: number | null = null;
   let maxItems: number | null = null;
+  let maxEmbedItems: number | null = null;
   let mode: PipelineMode = "backfill";
   let discoverLeaves = false;
   let companyId = CRAFOORD_STOCKHOLM_COMPANY_ID;
@@ -141,6 +145,13 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
         maxPages = parsePositiveInteger(readOptionValue(args, index, arg), arg);
         index += 1;
         break;
+      case "--max-embed-items":
+        maxEmbedItems = parsePositiveInteger(
+          readOptionValue(args, index, arg),
+          arg,
+        );
+        index += 1;
+        break;
       case "--max-items":
         maxItems = parsePositiveInteger(readOptionValue(args, index, arg), arg);
         index += 1;
@@ -161,6 +172,7 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
     stages,
     maxPages,
     maxItems,
+    maxEmbedItems,
     mode,
     discoverLeaves,
     companyId,
@@ -380,6 +392,7 @@ async function runCategory(
   category: CatalogCategory,
   options: CliOptions,
   scrapeMaxItems: number | null,
+  embedBudget: { remaining: number | null },
 ) {
   const itemsDir = categoryItemsDir(category.segment);
   const vectorsDir = categoryVectorsDir(category.segment);
@@ -461,19 +474,31 @@ async function runCategory(
     `prepare vectors: qdrant-skip ${prepared.alreadyInQdrant}, downloaded ${prepared.downloaded}, pending embed ${prepared.pendingEmbed}, unsold ${prepared.unsold}`,
   );
 
-  if (options.stages.has("embed")) {
-    const embedArgs = ["--items", itemsDir, "--out", vectorsDir, "--skip-indexed"];
-    if (options.maxItems !== null) {
-      embedArgs.push("--max-items", String(options.maxItems));
+  if (options.stages.has("embed") && embedBudget.remaining !== 0) {
+    const embedArgs = [
+      "--items",
+      itemsDir,
+      "--out",
+      vectorsDir,
+      "--skip-indexed",
+    ];
+    if (embedBudget.remaining !== null) {
+      embedArgs.push("--max-items", String(embedBudget.remaining));
     }
     if (options.dryRun) {
       embedArgs.push("--dry-run");
     }
 
     console.log("Embedding images (skips existing Vector Artifacts)...");
-    const embedResult = await runScript("scripts/embed.ts", embedArgs, false);
-    if (embedResult.code !== 0) {
-      throw new Error(`embed exited with code ${embedResult.code}`);
+    const summary = await embedAuctionetVectors(parseEmbedArgs(embedArgs));
+    console.log(
+      `Embed summary: ${summary.embedded} items, ${summary.images} images, ${summary.skipped} skipped, ${summary.failed} failed`,
+    );
+    if (embedBudget.remaining !== null) {
+      embedBudget.remaining -= summary.embedded + summary.failed;
+    }
+    if (summary.failed > 0) {
+      throw new Error(`Embedding failed for ${summary.failed} items`);
     }
   }
 
@@ -555,6 +580,7 @@ async function main() {
     stages: parsed.stages,
     maxPages: parsed.maxPages,
     maxItems: parsed.maxItems,
+    maxEmbedItems: parsed.maxEmbedItems,
     mode: parsed.mode,
     discoverLeaves: parsed.discoverLeaves,
     companyId: parsed.companyId,
@@ -587,6 +613,7 @@ async function main() {
   }
 
   let scrapeBudget = options.maxItems;
+  const embedBudget = { remaining: options.maxEmbedItems };
   let totalSaved = 0;
 
   for (const category of options.categories) {
@@ -597,7 +624,12 @@ async function main() {
       break;
     }
 
-    const saved = await runCategory(category, options, scrapeBudget);
+    const saved = await runCategory(
+      category,
+      options,
+      scrapeBudget,
+      embedBudget,
+    );
     totalSaved += saved;
     if (scrapeBudget !== null) {
       scrapeBudget = Math.max(0, scrapeBudget - saved);

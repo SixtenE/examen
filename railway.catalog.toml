@@ -5,7 +5,7 @@ builder = "RAILPACK"
 buildCommand = "pnpm install --frozen-lockfile"
 
 [deploy]
-startCommand = "pnpm cron -- --stages embed,store,upsert"
+startCommand = "pnpm cron -- --stages embed,store,upsert --max-embed-items 100"
 # Daily at 02:00 UTC; use a manual run to catch up first.
 cronSchedule = "0 2 * * *"
 restartPolicyType = "NEVER"
