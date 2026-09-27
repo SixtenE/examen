@@ -140,6 +140,22 @@ pnpm upsert -- \
 Create **separate** Railway services for cron (do not put schedules on the web app):
 
 - Scrape-only: point at `railway.scrape.toml` — every 30 minutes, `--stages scrape`
+- Catalog indexing: point a separate service at `railway.catalog.toml` — daily at 02:00 UTC, `--stages embed,store,upsert --max-embed-items 100`. Each run embeds up to 100 new items across all categories, including every image of each item (100 items with 5 images each = 500 images). Existing vectors, fully indexed items, and unsold items do not consume the budget. Failed items consume a slot to bound attempted work. Give it the same bucket credentials, `OPENROUTER_API_KEY`, `QDRANT_URL`, and `QDRANT_API_KEY`.
+
+For the initial catch-up, run one category first, then the full backlog:
+
+```bash
+pnpm cron -- --stages embed,store,upsert --category 9-ceramics-porcelain
+pnpm cron -- --stages embed,store,upsert
+```
+
+Use the same `CATALOG_CATEGORIES` as the scraper, or leave it unset for all supported leaves. Check each stage's summary for zero failures and confirm new references appear in Qdrant before enabling the daily schedule. Run only one indexing worker at a time to avoid duplicate embedding charges. The scraper can continue separately.
+
+Existing local vectors are reused; missing vectors are retrieved from the bucket where needed. When upsert is selected, items already fully indexed in Qdrant are skipped even on a fresh worker. Embed/store-only runs reuse saved artifacts without requiring Qdrant. Keep `store` enabled to preserve newly generated vectors for future runs. Do not use `--force` or `--recreate` for ordinary catch-up.
+
+Use `--max-embed-items 100` to limit new embedding work across categories, or omit it for an uncapped manual catch-up. `--max-items` controls scraping and caps upsert files scanned per category; avoid it for indexing catch-up. A dry run only examines local files and does not sync the bucket or check Qdrant, so it is not an accurate backlog or cost estimate.
+
+Vectors are stored after a category's embedding stage succeeds. If embedding fails, successful local vectors remain on that worker; run `--stages store` on the same disk before discarding it, then retry the full pipeline. A worker lost before storage may require some embeddings to be generated again.
 
 ```bash
 # Local dry run of the orchestrator

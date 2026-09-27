@@ -1,8 +1,17 @@
 import "dotenv/config";
 
 import { constants } from "node:fs";
-import { access, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { expectedPointIds, referenceCollection } from "../lib/catalog-paths";
 import { setTimeout as sleep } from "node:timers/promises";
 
 type CliOptions = {
@@ -12,6 +21,7 @@ type CliOptions = {
   delayMs: number;
   maxRetries: number;
   force: boolean;
+  skipIndexed: boolean;
   dryRun: boolean;
   maxItems: number | null;
 };
@@ -66,8 +76,9 @@ function usage() {
     `  --batch-size <n>       Image URLs per OpenRouter request (default: ${DEFAULT_BATCH_SIZE})`,
     `  --delay-ms <ms>        Delay between OpenRouter requests (default: ${DEFAULT_DELAY_MS})`,
     `  --max-retries <n>      Retries for 429/5xx responses (default: ${DEFAULT_MAX_RETRIES})`,
-    "  --max-items <n>        Stop after processing n item files",
+    "  --max-items <n>        Embed at most n items (existing/unsold items do not count)",
     "  --force                Regenerate existing vector files",
+    "  --skip-indexed         Skip items already in Qdrant (requires existing collections)",
     "  --dry-run              Print planned work without calling OpenRouter or writing files",
   ].join("\n");
 }
@@ -114,13 +125,14 @@ function categorySegment(dir: string, flag: string) {
   return segment;
 }
 
-function parseArgs(args: string[]): CliOptions {
+export function parseArgs(args: string[]): CliOptions {
   let itemsDir: string | null = null;
   let outDir: string | null = null;
   let batchSize = DEFAULT_BATCH_SIZE;
   let delayMs = DEFAULT_DELAY_MS;
   let maxRetries = DEFAULT_MAX_RETRIES;
   let force = false;
+  let skipIndexed = false;
   let dryRun = false;
   let maxItems: number | null = null;
 
@@ -139,20 +151,32 @@ function parseArgs(args: string[]): CliOptions {
         index += 1;
         break;
       case "--batch-size":
-        batchSize = parsePositiveInteger(readOptionValue(args, index, arg), arg);
+        batchSize = parsePositiveInteger(
+          readOptionValue(args, index, arg),
+          arg,
+        );
         index += 1;
         break;
       case "--delay-ms":
-        delayMs = parseNonNegativeInteger(readOptionValue(args, index, arg), arg);
+        delayMs = parseNonNegativeInteger(
+          readOptionValue(args, index, arg),
+          arg,
+        );
         index += 1;
         break;
       case "--max-retries":
-        maxRetries = parseNonNegativeInteger(readOptionValue(args, index, arg), arg);
+        maxRetries = parseNonNegativeInteger(
+          readOptionValue(args, index, arg),
+          arg,
+        );
         index += 1;
         break;
       case "--max-items":
         maxItems = parsePositiveInteger(readOptionValue(args, index, arg), arg);
         index += 1;
+        break;
+      case "--skip-indexed":
+        skipIndexed = true;
         break;
       case "--force":
         force = true;
@@ -178,7 +202,10 @@ function parseArgs(args: string[]): CliOptions {
   }
 
   const itemsCategory = categorySegment(itemsDir, "--items");
-  const outCategory = categorySegment(path.dirname(path.resolve(outDir)), "--out");
+  const outCategory = categorySegment(
+    path.dirname(path.resolve(outDir)),
+    "--out",
+  );
 
   if (itemsCategory !== outCategory) {
     throw new Error(
@@ -193,6 +220,7 @@ function parseArgs(args: string[]): CliOptions {
     delayMs,
     maxRetries,
     force,
+    skipIndexed,
     dryRun,
     maxItems,
   };
@@ -202,7 +230,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function validateAuctionetItem(value: unknown, filePath: string): AuctionetItemJson {
+function validateAuctionetItem(
+  value: unknown,
+  filePath: string,
+): AuctionetItemJson {
   if (!isRecord(value)) {
     throw new Error(`${filePath} must contain a JSON object`);
   }
@@ -211,7 +242,10 @@ function validateAuctionetItem(value: unknown, filePath: string): AuctionetItemJ
     throw new Error(`${filePath} is missing numeric auctionet_id`);
   }
 
-  if (!Array.isArray(value.image_urls) || !value.image_urls.every((url) => typeof url === "string")) {
+  if (
+    !Array.isArray(value.image_urls) ||
+    !value.image_urls.every((url) => typeof url === "string")
+  ) {
     throw new Error(`${filePath} is missing image_urls string array`);
   }
 
@@ -233,7 +267,10 @@ async function fileExists(filePath: string) {
   }
 }
 
-async function discoverItemFiles(itemsDir: string, skipDir: string): Promise<string[]> {
+async function discoverItemFiles(
+  itemsDir: string,
+  skipDir: string,
+): Promise<string[]> {
   const entries = await readdir(itemsDir, { withFileTypes: true });
   const files: string[] = [];
 
@@ -330,7 +367,9 @@ function extractEmbeddings(body: unknown, expectedCount: number) {
   }
 
   if (body.data.length !== expectedCount) {
-    throw new Error(`Embedding response returned ${body.data.length} vectors for ${expectedCount} inputs`);
+    throw new Error(
+      `Embedding response returned ${body.data.length} vectors for ${expectedCount} inputs`,
+    );
   }
 
   return body.data.map((entry, index) => {
@@ -339,7 +378,9 @@ function extractEmbeddings(body: unknown, expectedCount: number) {
     }
 
     if (!entry.embedding.every((value) => typeof value === "number")) {
-      throw new Error(`Embedding response vector at index ${index} contains non-numeric values`);
+      throw new Error(
+        `Embedding response vector at index ${index} contains non-numeric values`,
+      );
     }
 
     if (entry.embedding.length !== EMBEDDING_DIMENSIONS) {
@@ -352,7 +393,10 @@ function extractEmbeddings(body: unknown, expectedCount: number) {
   });
 }
 
-async function embedImageUrlBatch(imageUrls: string[], options: Pick<CliOptions, "maxRetries">) {
+async function embedImageUrlBatch(
+  imageUrls: string[],
+  options: Pick<CliOptions, "maxRetries">,
+) {
   for (let attempt = 0; attempt <= options.maxRetries; attempt += 1) {
     let response: Response;
 
@@ -406,8 +450,13 @@ async function embedImageUrlBatch(imageUrls: string[], options: Pick<CliOptions,
       );
     }
 
-    const backoffMs = getBackoffMs(attempt, response.headers.get("retry-after"));
-    console.warn(`OpenRouter returned ${response.status}; retrying in ${backoffMs}ms`);
+    const backoffMs = getBackoffMs(
+      attempt,
+      response.headers.get("retry-after"),
+    );
+    console.warn(
+      `OpenRouter returned ${response.status}; retrying in ${backoffMs}ms`,
+    );
     await sleep(backoffMs);
   }
 
@@ -427,7 +476,7 @@ async function writeJsonAtomically(filePath: string, value: unknown) {
   await rename(tempPath, filePath);
 }
 
-async function embedItem(
+export async function embedItem(
   itemPath: string,
   outputPath: string,
   options: CliOptions,
@@ -437,7 +486,9 @@ async function embedItem(
   const item = await readAuctionetItem(itemPath);
 
   if (item.status !== "sold") {
-    console.log(`skip unsold: ${relativeItemPath} (status: ${item.status ?? "missing"})`);
+    console.log(
+      `skip unsold: ${relativeItemPath} (status: ${item.status ?? "missing"})`,
+    );
     return { imageCount: 0, skipped: false, unsold: true };
   }
 
@@ -447,8 +498,30 @@ async function embedItem(
   }
 
   if (options.dryRun) {
-    console.log(`embed: ${relativeItemPath} -> ${relativeOutputPath} (${item.image_urls.length} images)`);
-    return { imageCount: item.image_urls.length, skipped: false, unsold: false };
+    console.log(
+      `embed: ${relativeItemPath} -> ${relativeOutputPath} (${item.image_urls.length} images)`,
+    );
+    return {
+      imageCount: item.image_urls.length,
+      skipped: false,
+      unsold: false,
+    };
+  }
+
+  if (options.skipIndexed && !options.force) {
+    const { qdrantClient } = await import("../lib/qdrant");
+    const ids = expectedPointIds(item.auctionet_id, item.image_urls.length);
+    const records =
+      ids.length === 0
+        ? []
+        : await qdrantClient.retrieve(
+            referenceCollection(categorySegment(options.itemsDir, "--items")),
+            { ids, with_payload: false, with_vector: false },
+          );
+    if (records.length === ids.length) {
+      console.log(`skip indexed: ${relativeItemPath}`);
+      return { imageCount: 0, skipped: true, unsold: false };
+    }
   }
 
   const references: ReferenceVector[] = [];
@@ -490,7 +563,7 @@ async function embedItem(
   return { imageCount: references.length, skipped: false, unsold: false };
 }
 
-async function embedAuctionetVectors(options: CliOptions) {
+export async function embedAuctionetVectors(options: CliOptions) {
   if (!options.dryRun && !process.env.OPENROUTER_API_KEY) {
     throw new Error("OPENROUTER_API_KEY must be set");
   }
@@ -498,7 +571,6 @@ async function embedAuctionetVectors(options: CliOptions) {
   const itemsDir = path.resolve(options.itemsDir);
   const outDir = path.resolve(options.outDir);
   const itemFiles = await discoverItemFiles(itemsDir, outDir);
-  const selectedItemFiles = options.maxItems === null ? itemFiles : itemFiles.slice(0, options.maxItems);
   const summary: Summary = {
     embedded: 0,
     skipped: 0,
@@ -507,7 +579,12 @@ async function embedAuctionetVectors(options: CliOptions) {
     images: 0,
   };
 
-  for (const itemPath of selectedItemFiles) {
+  for (const itemPath of itemFiles) {
+    if (
+      options.maxItems !== null &&
+      summary.embedded + summary.failed >= options.maxItems
+    )
+      break;
     const outputPath = getOutputPath(itemPath, itemsDir, outDir);
 
     try {
@@ -546,8 +623,13 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  console.error(usage());
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    console.error(usage());
+    process.exitCode = 1;
+  });
+}
