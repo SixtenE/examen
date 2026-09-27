@@ -1,6 +1,6 @@
 # Deterministic Qdrant Reference point IDs
 
-Reference points in Qdrant use deterministic numeric IDs derived from their source Auctionet Item and image position: `auctionet_id * 100 + image_index`. The seed script validates that `image_index < 100` before upload. This makes seeding idempotent: re-uploading the same Reference overwrites the existing point instead of creating a duplicate.
+Reference points in Qdrant use deterministic numeric IDs derived from their source Auctionet Item and image position: `auctionet_id * 100 + image_index`. The upsert script validates that `image_index < 100` before upload. This makes seeding idempotent: re-uploading the same Reference overwrites the existing point instead of creating a duplicate.
 
 ## Considered Options
 
@@ -11,4 +11,4 @@ Reference points in Qdrant use deterministic numeric IDs derived from their sour
 
 ## Consequences
 
-Changing the point ID scheme later is a data migration, not a harmless refactor: old and new IDs would coexist in Qdrant and duplicate the catalog unless the collection is recreated. Resume behavior uses Qdrant as the source of truth: for each Vector Artifact, the seed script retrieves the expected point IDs and skips the artifact only when every point already exists. A `--force` run bypasses that check and overwrites points with the current artifact payload.
+Changing the point ID scheme later is a data migration, not a harmless refactor: old and new IDs would coexist in Qdrant and duplicate the catalog unless the collection is recreated. Resume behavior uses Qdrant as the source of truth: for each Vector Artifact, the upsert script retrieves the expected point IDs and skips the artifact only when every point already exists. A `--force` run bypasses that check and overwrites points with the current artifact payload.
