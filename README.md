@@ -127,7 +127,7 @@ pnpm upsert -- \
 
 `--stages` accepts any comma list of `scrape`, `embed`, `store`, `upsert` (default: all four). Bucket→local sync is implicit whenever embed, store, or upsert is selected.
 
-### Daily automation on Railway
+### Scheduled automation on Railway
 
 `pnpm cron` runs the selected stages for each configured Auctionet Category:
 
@@ -140,7 +140,7 @@ pnpm upsert -- \
 Create **separate** Railway services for cron (do not put schedules on the web app):
 
 - Scrape-only: point at `railway.scrape.toml` — every 30 minutes, `--stages scrape`
-- Catalog indexing: point a separate service at `railway.catalog.toml` — daily at 02:00 UTC, `--stages embed,store,upsert --max-embed-items 100`. Each run embeds up to 100 new items across all categories, including every image of each item (100 items with 5 images each = 500 images). Existing vectors, fully indexed items, and unsold items do not consume the budget. Failed items consume a slot to bound attempted work. Give it the same bucket credentials, `OPENROUTER_API_KEY`, `QDRANT_URL`, and `QDRANT_API_KEY`.
+- Catalog indexing: point a separate service at `railway.catalog.toml` — hourly on the hour (UTC), `--stages embed,store,upsert --max-embed-items 100`. Each run embeds up to 100 new items across all categories, including every image of each item (100 items with 5 images each = 500 images). Existing vectors, fully indexed items, and unsold items do not consume the budget. Failed items consume a slot to bound attempted work. Give it the same bucket credentials, `OPENROUTER_API_KEY`, `QDRANT_URL`, and `QDRANT_API_KEY`.
 
 For the initial catch-up, run one category first, then the full backlog:
 
@@ -149,7 +149,7 @@ pnpm cron -- --stages embed,store,upsert --category 9-ceramics-porcelain
 pnpm cron -- --stages embed,store,upsert
 ```
 
-Use the same `CATALOG_CATEGORIES` as the scraper, or leave it unset for all supported leaves. Check each stage's summary for zero failures and confirm new references appear in Qdrant before enabling the daily schedule. Run only one indexing worker at a time to avoid duplicate embedding charges. The scraper can continue separately.
+Use the same `CATALOG_CATEGORIES` as the scraper, or leave it unset for all supported leaves. Check each stage's summary for zero failures and confirm new references appear in Qdrant before enabling the hourly schedule. Run only one indexing worker at a time to avoid duplicate embedding charges. The scraper can continue separately.
 
 Existing local vectors are reused; missing vectors are retrieved from the bucket where needed. When upsert is selected, items already fully indexed in Qdrant are skipped even on a fresh worker. Embed/store-only runs reuse saved artifacts without requiring Qdrant. Keep `store` enabled to preserve newly generated vectors for future runs. Do not use `--force` or `--recreate` for ordinary catch-up.
 
@@ -185,7 +185,7 @@ Bucket keys live under `scrape/...` so they never collide with Query image Keys.
 - [Qdrant selection](./docs/adr/0002-qdrant-for-vector-storage.md)
 - [Match generation lifecycle](./docs/adr/0003-page-driven-match-generation.md)
 - [Deterministic vector IDs](./docs/adr/0004-deterministic-qdrant-reference-point-ids.md)
-- [Daily catalog pipeline](./docs/adr/0008-daily-catalog-pipeline-on-railway.md)
+- [Scheduled catalog pipeline](./docs/adr/0008-daily-catalog-pipeline-on-railway.md)
 
 ## Scripts
 
