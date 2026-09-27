@@ -133,7 +133,7 @@ pnpm upsert -- \
 
 1. **scrape** — Auctionet Item JSON to the bucket (`HeadObject` skip)
 2. Sync items down from the bucket (implicit when embed/store/upsert run)
-3. **embed** — reuse Vector Artifacts already in Qdrant or the bucket; embed only the rest
+3. **embed** — restore missing local Vector Artifacts from the bucket; embed only items without a local or bucket artifact
 4. **store** — Vector Artifacts to the bucket (`HeadObject` skip)
 5. **upsert** — Qdrant upsert (skip artifacts whose deterministic point IDs already exist)
 
@@ -151,7 +151,7 @@ pnpm cron -- --stages embed,store,upsert
 
 Use the same `CATALOG_CATEGORIES` as the scraper, or leave it unset for all supported leaves. Check each stage's summary for zero failures and confirm new references appear in Qdrant before enabling the daily schedule. Run only one indexing worker at a time to avoid duplicate embedding charges. The scraper can continue separately.
 
-Existing local vectors are reused; missing vectors are retrieved from the bucket where needed. Items already fully indexed in Qdrant are skipped even on a fresh worker. Keep `store` enabled to preserve newly generated vectors for future runs. Do not use `--force` or `--recreate` for ordinary catch-up.
+Existing local vectors are reused; missing vectors are retrieved from the bucket where needed. When upsert is selected, items already fully indexed in Qdrant are skipped even on a fresh worker. Embed/store-only runs reuse saved artifacts without requiring Qdrant. Keep `store` enabled to preserve newly generated vectors for future runs. Do not use `--force` or `--recreate` for ordinary catch-up.
 
 Use `--max-embed-items 100` to limit new embedding work across categories, or omit it for an uncapped manual catch-up. `--max-items` controls scraping and caps upsert files scanned per category; avoid it for indexing catch-up. A dry run only examines local files and does not sync the bucket or check Qdrant, so it is not an accurate backlog or cost estimate.
 

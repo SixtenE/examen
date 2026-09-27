@@ -125,7 +125,7 @@ describe("GET /api/queries/[id]/matches", () => {
     vi.useRealTimers();
   });
 
-  it("deduplicates matches by auctionet_id and ranks by recency-weighted score", async () => {
+  it("deduplicates matches by auctionet_id and ranks by similarity alone", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-24T12:00:00Z"));
 
@@ -135,10 +135,10 @@ describe("GET /api/queries/[id]/matches", () => {
 
     expect(response.status).toBe(200);
     expect(body).toHaveLength(2);
-    expect(body[0].auctionet_id).toBe("lot-2");
-    expect(body[0].similarity_score).toBe(0.85);
-    expect(body[1].auctionet_id).toBe("lot-1");
-    expect(body[1].similarity_score).toBe(0.92);
+    expect(body[0].auctionet_id).toBe("lot-1");
+    expect(body[0].similarity_score).toBe(0.92);
+    expect(body[1].auctionet_id).toBe("lot-2");
+    expect(body[1].similarity_score).toBe(0.85);
   });
 
   it("returns 404 for invalid UUIDs", async () => {
@@ -284,7 +284,7 @@ describe("POST /api/queries/[id]/matches", () => {
     ).toBe(false);
   });
 
-  it("ranks a recent mid score above an old high score", async () => {
+  it("ranks by similarity regardless of old or missing sale dates", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-24T12:00:00Z"));
 
@@ -293,6 +293,7 @@ describe("POST /api/queries/[id]/matches", () => {
         return Promise.resolve([
           hit("old-high", 0.92, FIVE_YEARS_AGO_UNIX),
           hit("recent-mid", 0.85, MONTH_AGO_UNIX),
+          hit("undated-highest", 0.99, null),
         ]);
       }
 
@@ -308,11 +309,13 @@ describe("POST /api/queries/[id]/matches", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toHaveLength(2);
-    expect(body[0].auctionet_id).toBe("recent-mid");
-    expect(body[0].similarity_score).toBe(0.85);
+    expect(body).toHaveLength(3);
+    expect(body[0].auctionet_id).toBe("undated-highest");
+    expect(body[0].similarity_score).toBe(0.99);
     expect(body[1].auctionet_id).toBe("old-high");
     expect(body[1].similarity_score).toBe(0.92);
+    expect(body[2].auctionet_id).toBe("recent-mid");
+    expect(body[2].similarity_score).toBe(0.85);
   });
 
   it.each(["ready", "processing"])(
