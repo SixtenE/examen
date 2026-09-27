@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   discoverCompanyLeafCategories,
   INCREMENTAL_LISTING_ORDER,
@@ -16,11 +17,9 @@ import {
   categoryVectorsBucketPrefix,
   categoryVectorsDir,
   CRAFOORD_STOCKHOLM_COMPANY_ID,
-  expectedPointIds,
   localPathToBucketKey,
   parseCatalogCategories,
   parsePipelineStages,
-  referenceCollection,
   type CatalogCategory,
   type PipelineStage,
 } from "../lib/catalog-paths";
@@ -287,37 +286,16 @@ function parseScrapeSaved(output: string) {
   return Number(matches[matches.length - 1][1]);
 }
 
-async function artifactAlreadySeeded(
-  collectionName: string,
-  pointIds: number[],
-) {
-  if (pointIds.length === 0) {
-    return true;
-  }
-
-  const { qdrantClient } = await import("../lib/qdrant");
-  const records = await qdrantClient.retrieve(collectionName, {
-    ids: pointIds,
-    with_payload: false,
-    with_vector: false,
-  });
-
-  return records.length === pointIds.length;
-}
-
-async function prepareVectors(
+export async function prepareVectors(
   category: CatalogCategory,
   dryRun: boolean,
-  force: boolean,
 ) {
   const { catalogObjectExists, downloadCatalogObject } =
     await import("../lib/catalog-bucket");
   const itemsDir = categoryItemsDir(category.segment);
   const vectorsDir = categoryVectorsDir(category.segment);
-  const collectionName = referenceCollection(category.segment);
   const itemFiles = await discoverItemFiles(itemsDir, vectorsDir);
 
-  let alreadyInQdrant = 0;
   let downloaded = 0;
   let pendingEmbed = 0;
   let unsold = 0;
@@ -340,23 +318,8 @@ async function prepareVectors(
       continue;
     }
 
-    const pointIds = expectedPointIds(
-      item.auctionet_id,
-      item.image_urls.length,
-    );
-
-    // Without --force, seeded points need no local Vector Artifact for upsert.
-    // With --force, download so upsert can rewrite payloads (e.g. Sold At).
-    if (
-      !force &&
-      !dryRun &&
-      (await artifactAlreadySeeded(collectionName, pointIds))
-    ) {
-      alreadyInQdrant += 1;
-      console.log(`skip seeded: ${relative}`);
-      continue;
-    }
-
+    // Restore durable artifacts before embed checks for local files.
+    // Qdrant point existence only skips upsert, never artifact restoration.
     if (dryRun) {
       console.log(`dry-run would fetch or embed vector: ${relative}`);
       pendingEmbed += 1;
@@ -373,7 +336,7 @@ async function prepareVectors(
     pendingEmbed += 1;
   }
 
-  return { alreadyInQdrant, downloaded, pendingEmbed, unsold };
+  return { downloaded, pendingEmbed, unsold };
 }
 
 async function runCategory(
@@ -449,16 +412,10 @@ async function runCategory(
     );
   }
 
+  console.log("Preparing Vector Artifacts (reuse local and bucket vectors)...");
+  const prepared = await prepareVectors(category, options.dryRun);
   console.log(
-    "Preparing Vector Artifacts (skip Qdrant duplicates, reuse bucket vectors)...",
-  );
-  const prepared = await prepareVectors(
-    category,
-    options.dryRun,
-    options.force,
-  );
-  console.log(
-    `prepare vectors: qdrant-skip ${prepared.alreadyInQdrant}, downloaded ${prepared.downloaded}, pending embed ${prepared.pendingEmbed}, unsold ${prepared.unsold}`,
+    `prepare vectors: downloaded ${prepared.downloaded}, pending embed ${prepared.pendingEmbed}, unsold ${prepared.unsold}`,
   );
 
   if (options.stages.has("embed")) {
@@ -575,8 +532,8 @@ async function main() {
     options.stages.has("store") ||
     options.stages.has("upsert");
 
-  // prepareVectors retrieves point IDs before upsert creates collections; ensure all leaves first.
-  if (!options.dryRun && needsLocal) {
+  // Search requires every leaf collection, including empty categories.
+  if (!options.dryRun && options.stages.has("upsert")) {
     const { ensureReferenceCollection } = await import("../lib/qdrant");
     console.log(
       `Ensuring ${AUCTIONET_LEAF_CATEGORIES.length} Qdrant collections...`,
@@ -613,19 +570,20 @@ async function main() {
   console.log("\nCatalog pipeline finished");
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    console.error(usage());
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    // Destroy the S3 client so Railway cron exits instead of hanging on open handles.
-    // QdrantClient has no close/destroy API; it uses plain fetch.
-    try {
-      const { s3Client } = await import("../lib/s3");
-      s3Client.destroy();
-    } catch {
-      // S3 may be unset in dry local exploration.
-    }
-  });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+  main()
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : error);
+      console.error(usage());
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      // Destroy the S3 client so Railway cron exits instead of hanging on open handles.
+      // QdrantClient has no close/destroy API; it uses plain fetch.
+      try {
+        const { s3Client } = await import("../lib/s3");
+        s3Client.destroy();
+      } catch {
+        // S3 may be unset in dry local exploration.
+      }
+    });

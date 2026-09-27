@@ -133,7 +133,7 @@ pnpm upsert -- \
 
 1. **scrape** — Auctionet Item JSON to the bucket (`HeadObject` skip)
 2. Sync items down from the bucket (implicit when embed/store/upsert run)
-3. **embed** — reuse Vector Artifacts already in Qdrant or the bucket; embed only the rest
+3. **embed** — restore missing local Vector Artifacts from the bucket; embed only items without a local or bucket artifact
 4. **store** — Vector Artifacts to the bucket (`HeadObject` skip)
 5. **upsert** — Qdrant upsert (skip artifacts whose deterministic point IDs already exist)
 
