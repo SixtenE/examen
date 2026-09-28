@@ -57,7 +57,7 @@ export default defineRailway(() => {
   const embed = service("embed", {
     source: examen,
     build: "pnpm install --frozen-lockfile",
-    start: "pnpm cron -- --stages embed,store,upsert --max-embed-items 100",
+    start: "pnpm cron -- --stages embed,store,upsert --max-embed-items 50",
     replicas: { "europe-west4-drams3a": 1 },
     deploy: { cronSchedule: "0 * * * *", restartPolicyType: "NEVER" },
     networking: { privateNetworkEndpoint: "dependable-communication" },

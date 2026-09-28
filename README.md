@@ -140,7 +140,7 @@ pnpm upsert -- \
 Railway services, including their start commands and cron schedules, are defined in [`.railway/railway.ts`](.railway/railway.ts) (Railway Infrastructure as Code). Preview changes with `railway config plan`, then apply with `railway config apply`. Cron runs on **separate** services, not the web app:
 
 - `scrape`: every 30 minutes, `--stages scrape`
-- `embed` (catalog indexing): hourly on the hour (UTC), `--stages embed,store,upsert --max-embed-items 100`. Each run embeds up to 100 new items across all categories, including every image of each item (100 items with 5 images each = 500 images). Existing vectors, fully indexed items, and unsold items do not consume the budget. Failed items consume a slot to bound attempted work. Give it the same bucket credentials, `OPENROUTER_API_KEY`, `QDRANT_URL`, and `QDRANT_API_KEY`.
+- `embed` (catalog indexing): hourly on the hour (UTC), `--stages embed,store,upsert --max-embed-items 50`. Each run embeds up to 50 new items across all categories, including every image of each item (50 items with 5 images each = 250 images). Existing vectors, fully indexed items, and unsold items do not consume the budget. Failed items consume a slot to bound attempted work. Give it the same bucket credentials, `OPENROUTER_API_KEY`, `QDRANT_URL`, and `QDRANT_API_KEY`.
 
 For the initial catch-up, run one category first, then the full backlog:
 
@@ -153,7 +153,7 @@ Use the same `CATALOG_CATEGORIES` as the scraper, or leave it unset for all supp
 
 Existing local vectors are reused; missing vectors are retrieved from the bucket where needed. When upsert is selected, items already fully indexed in Qdrant are skipped even on a fresh worker. Embed/store-only runs reuse saved artifacts without requiring Qdrant. Keep `store` enabled to preserve newly generated vectors for future runs. Do not use `--force` or `--recreate` for ordinary catch-up.
 
-Use `--max-embed-items 100` to limit new embedding work across categories, or omit it for an uncapped manual catch-up. `--max-items` controls scraping and caps upsert files scanned per category; avoid it for indexing catch-up. A dry run only examines local files and does not sync the bucket or check Qdrant, so it is not an accurate backlog or cost estimate.
+Use `--max-embed-items 50` to limit new embedding work across categories, or omit it for an uncapped manual catch-up. `--max-items` controls scraping and caps upsert files scanned per category; avoid it for indexing catch-up. A dry run only examines local files and does not sync the bucket or check Qdrant, so it is not an accurate backlog or cost estimate.
 
 Vectors are stored after a category's embedding stage succeeds. If embedding fails, successful local vectors remain on that worker; run `--stages store` on the same disk before discarding it, then retry the full pipeline. A worker lost before storage may require some embeddings to be generated again.
 
