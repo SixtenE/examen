@@ -137,10 +137,10 @@ pnpm upsert -- \
 4. **store** — Vector Artifacts to the bucket (`HeadObject` skip)
 5. **upsert** — Qdrant upsert (skip artifacts whose deterministic point IDs already exist)
 
-Create **separate** Railway services for cron (do not put schedules on the web app):
+Railway services, including their start commands and cron schedules, are defined in [`.railway/railway.ts`](.railway/railway.ts) (Railway Infrastructure as Code). Preview changes with `railway config plan`, then apply with `railway config apply`. Cron runs on **separate** services, not the web app:
 
-- Scrape-only: point at `railway.scrape.toml` — every 30 minutes, `--stages scrape`
-- Catalog indexing: point a separate service at `railway.catalog.toml` — hourly on the hour (UTC), `--stages embed,store,upsert --max-embed-items 100`. Each run embeds up to 100 new items across all categories, including every image of each item (100 items with 5 images each = 500 images). Existing vectors, fully indexed items, and unsold items do not consume the budget. Failed items consume a slot to bound attempted work. Give it the same bucket credentials, `OPENROUTER_API_KEY`, `QDRANT_URL`, and `QDRANT_API_KEY`.
+- `scrape`: every 30 minutes, `--stages scrape`
+- `embed` (catalog indexing): hourly on the hour (UTC), `--stages embed,store,upsert --max-embed-items 100`. Each run embeds up to 100 new items across all categories, including every image of each item (100 items with 5 images each = 500 images). Existing vectors, fully indexed items, and unsold items do not consume the budget. Failed items consume a slot to bound attempted work. Give it the same bucket credentials, `OPENROUTER_API_KEY`, `QDRANT_URL`, and `QDRANT_API_KEY`.
 
 For the initial catch-up, run one category first, then the full backlog:
 
@@ -161,7 +161,7 @@ Vectors are stored after a category's embedding stage succeeds. If embedding fai
 # Local dry run of the orchestrator
 pnpm cron -- --dry-run --max-pages 1 --max-items 5
 
-# Scrape-only (same as railway.scrape.toml)
+# Scrape-only (same as the scrape service)
 pnpm cron -- --stages scrape --mode backfill --max-items 500
 ```
 
