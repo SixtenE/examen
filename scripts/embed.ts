@@ -12,6 +12,7 @@ import {
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { expectedPointIds, referenceCollection } from "../lib/catalog-paths";
+import { formatDuration } from "../lib/format-duration";
 import { setTimeout as sleep } from "node:timers/promises";
 
 type CliOptions = {
@@ -56,6 +57,7 @@ type Summary = {
   unsold: number;
   failed: number;
   images: number;
+  elapsedMs: number;
 };
 
 const CATEGORY_SEGMENT_PATTERN = /^\d+-[a-z0-9-]+$/;
@@ -480,31 +482,40 @@ export async function embedItem(
   itemPath: string,
   outputPath: string,
   options: CliOptions,
-): Promise<{ imageCount: number; skipped: boolean; unsold: boolean }> {
+): Promise<{
+  imageCount: number;
+  skipped: boolean;
+  unsold: boolean;
+  message: string;
+}> {
   const relativeItemPath = path.relative(process.cwd(), itemPath);
   const relativeOutputPath = path.relative(process.cwd(), outputPath);
   const item = await readAuctionetItem(itemPath);
 
   if (item.status !== "sold") {
-    console.log(
-      `skip unsold: ${relativeItemPath} (status: ${item.status ?? "missing"})`,
-    );
-    return { imageCount: 0, skipped: false, unsold: true };
+    return {
+      imageCount: 0,
+      skipped: false,
+      unsold: true,
+      message: `skip unsold: ${relativeItemPath} (status: ${item.status ?? "missing"})`,
+    };
   }
 
   if (!options.force && (await fileExists(outputPath))) {
-    console.log(`skip existing: ${relativeOutputPath}`);
-    return { imageCount: 0, skipped: true, unsold: false };
+    return {
+      imageCount: 0,
+      skipped: true,
+      unsold: false,
+      message: `skip existing: ${relativeOutputPath}`,
+    };
   }
 
   if (options.dryRun) {
-    console.log(
-      `embed: ${relativeItemPath} -> ${relativeOutputPath} (${item.image_urls.length} images)`,
-    );
     return {
       imageCount: item.image_urls.length,
       skipped: false,
       unsold: false,
+      message: `embed: ${relativeItemPath} -> ${relativeOutputPath} (${item.image_urls.length} images)`,
     };
   }
 
@@ -519,8 +530,12 @@ export async function embedItem(
             { ids, with_payload: false, with_vector: false },
           );
     if (records.length === ids.length) {
-      console.log(`skip indexed: ${relativeItemPath}`);
-      return { imageCount: 0, skipped: true, unsold: false };
+      return {
+        imageCount: 0,
+        skipped: true,
+        unsold: false,
+        message: `skip indexed: ${relativeItemPath}`,
+      };
     }
   }
 
@@ -558,9 +573,13 @@ export async function embedItem(
   };
 
   await writeJsonAtomically(outputPath, artifact);
-  console.log(`wrote: ${relativeOutputPath} (${references.length} images)`);
 
-  return { imageCount: references.length, skipped: false, unsold: false };
+  return {
+    imageCount: references.length,
+    skipped: false,
+    unsold: false,
+    message: `wrote: ${relativeOutputPath} (${references.length} images)`,
+  };
 }
 
 export async function embedAuctionetVectors(options: CliOptions) {
@@ -570,6 +589,7 @@ export async function embedAuctionetVectors(options: CliOptions) {
 
   const itemsDir = path.resolve(options.itemsDir);
   const outDir = path.resolve(options.outDir);
+  const startedAt = Date.now();
   const itemFiles = await discoverItemFiles(itemsDir, outDir);
   const summary: Summary = {
     embedded: 0,
@@ -577,36 +597,100 @@ export async function embedAuctionetVectors(options: CliOptions) {
     unsold: 0,
     failed: 0,
     images: 0,
+    elapsedMs: 0,
   };
 
+  const pending: string[] = [];
   for (const itemPath of itemFiles) {
+    let item: AuctionetItemJson;
+    try {
+      item = await readAuctionetItem(itemPath);
+    } catch {
+      pending.push(itemPath);
+      continue;
+    }
+
+    if (item.status !== "sold") {
+      summary.unsold += 1;
+    } else if (
+      !options.force &&
+      (await fileExists(getOutputPath(itemPath, itemsDir, outDir)))
+    ) {
+      summary.skipped += 1;
+    } else {
+      pending.push(itemPath);
+    }
+  }
+
+  console.log(
+    `embed ${path.basename(itemsDir)}: ${itemFiles.length} items -> ${pending.length} to embed (${summary.unsold} unsold, ${summary.skipped} existing)${
+      options.maxItems === null ? "" : `, limit ${options.maxItems}`
+    }`,
+  );
+
+  const loopStartedAt = Date.now();
+  let processed = 0;
+  let quickSkips = 0;
+
+  for (const itemPath of pending) {
     if (
       options.maxItems !== null &&
       summary.embedded + summary.failed >= options.maxItems
     )
       break;
     const outputPath = getOutputPath(itemPath, itemsDir, outDir);
+    const itemStartedAt = Date.now();
+    let line: string;
+    let failed = false;
 
     try {
       const result = await embedItem(itemPath, outputPath, options);
       if (result.unsold) {
         summary.unsold += 1;
+        quickSkips += 1;
       } else if (result.skipped) {
         summary.skipped += 1;
+        quickSkips += 1;
       } else {
         summary.embedded += 1;
       }
       summary.images += result.imageCount;
+      line =
+        result.skipped || result.unsold
+          ? result.message
+          : `${result.message} ${formatDuration(Date.now() - itemStartedAt)}`;
     } catch (error) {
       summary.failed += 1;
-      console.error(
-        `failed: ${path.relative(process.cwd(), itemPath)}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      failed = true;
+      line = `failed: ${path.relative(process.cwd(), itemPath)}: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+    }
+
+    processed += 1;
+    // Skips found during the loop don't use up the --max-items budget.
+    const total = Math.min(
+      pending.length,
+      (options.maxItems ?? Infinity) + quickSkips,
+    );
+    const worked = summary.embedded + summary.failed;
+    const elapsedMs = Date.now() - loopStartedAt;
+    const eta =
+      worked === 0
+        ? "--"
+        : formatDuration((total - processed) * (elapsedMs / worked));
+    const width = String(total).length;
+    const percent = Math.floor((processed / total) * 100);
+    const status = `[${String(processed).padStart(width)}/${total} ${String(percent).padStart(3)}%] ${line} | elapsed ${formatDuration(elapsedMs)} | ETA ${eta}`;
+
+    if (failed) {
+      console.error(status);
+    } else {
+      console.log(status);
     }
   }
 
+  summary.elapsedMs = Date.now() - startedAt;
   return summary;
 }
 
@@ -615,7 +699,7 @@ async function main() {
   const summary = await embedAuctionetVectors(options);
 
   console.log(
-    `Summary: embedded ${summary.embedded}, skipped ${summary.skipped}, unsold ${summary.unsold}, failed ${summary.failed}, images ${summary.images}`,
+    `Summary: embedded ${summary.embedded}, skipped ${summary.skipped}, unsold ${summary.unsold}, failed ${summary.failed}, images ${summary.images} in ${formatDuration(summary.elapsedMs)}`,
   );
 
   if (summary.failed > 0) {
