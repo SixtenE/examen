@@ -83,7 +83,12 @@ afterEach(async () => {
 it("restores bucket vectors on a fresh disk even when already indexed, so embed skips them", async () => {
   const prepared = await prepareVectors(category, false);
   expect(downloadCatalogObject).toHaveBeenCalledWith(bucketKey, vectorPath());
-  expect(prepared).toEqual({ downloaded: 1, pendingEmbed: 0, unsold: 0 });
+  expect(prepared).toEqual({
+    downloaded: 1,
+    pendingEmbed: 0,
+    unsold: 0,
+    pending: [],
+  });
   expect(await readFile(vectorPath(), "utf8")).toBe(artifact);
   expect(qdrantClient.retrieve).not.toHaveBeenCalled();
 
@@ -111,6 +116,7 @@ it("keeps an existing local artifact without contacting either service", async (
     downloaded: 0,
     pendingEmbed: 0,
     unsold: 0,
+    pending: [],
   });
   expect(catalogObjectExists).not.toHaveBeenCalled();
   expect(downloadCatalogObject).not.toHaveBeenCalled();
@@ -124,6 +130,7 @@ it("leaves items without a durable artifact for embedding", async () => {
     downloaded: 0,
     pendingEmbed: 1,
     unsold: 0,
+    pending: [itemPath()],
   });
   expect(catalogObjectExists).toHaveBeenCalledWith(bucketKey);
   expect(downloadCatalogObject).not.toHaveBeenCalled();
@@ -132,12 +139,29 @@ it("leaves items without a durable artifact for embedding", async () => {
   });
 });
 
+it("stops checking the bucket once the embed limit is reached", async () => {
+  vi.mocked(catalogObjectExists).mockResolvedValue(false);
+  for (const id of [10002, 10003]) {
+    await writeFile(
+      path.join(path.dirname(itemPath()), `${id}.json`),
+      JSON.stringify({ ...item, auctionet_id: id }),
+    );
+  }
+  const prepared = await prepareVectors(category, false, 2);
+  expect(prepared.pending).toEqual([
+    itemPath(),
+    path.join(path.dirname(itemPath()), "10002.json"),
+  ]);
+  expect(catalogObjectExists).toHaveBeenCalledTimes(2);
+});
+
 it("ignores unsold items", async () => {
   await writeFile(itemPath(), JSON.stringify({ ...item, status: "unsold" }));
   await expect(prepareVectors(category, false)).resolves.toEqual({
     downloaded: 0,
     pendingEmbed: 0,
     unsold: 1,
+    pending: [],
   });
   expect(catalogObjectExists).not.toHaveBeenCalled();
 });
@@ -147,6 +171,7 @@ it("does not contact storage or Qdrant in dry-run mode", async () => {
     downloaded: 0,
     pendingEmbed: 1,
     unsold: 0,
+    pending: [itemPath()],
   });
   expect(catalogObjectExists).not.toHaveBeenCalled();
   expect(downloadCatalogObject).not.toHaveBeenCalled();

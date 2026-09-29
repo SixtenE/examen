@@ -25,6 +25,7 @@ type CliOptions = {
   skipIndexed: boolean;
   dryRun: boolean;
   maxItems: number | null;
+  itemFiles?: string[];
 };
 
 type AuctionetItemJson = {
@@ -590,7 +591,8 @@ export async function embedAuctionetVectors(options: CliOptions) {
   const itemsDir = path.resolve(options.itemsDir);
   const outDir = path.resolve(options.outDir);
   const startedAt = Date.now();
-  const itemFiles = await discoverItemFiles(itemsDir, outDir);
+  const itemFiles =
+    options.itemFiles ?? (await discoverItemFiles(itemsDir, outDir));
   const summary: Summary = {
     embedded: 0,
     skipped: 0,

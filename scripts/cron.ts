@@ -301,6 +301,7 @@ function parseScrapeSaved(output: string) {
 export async function prepareVectors(
   category: CatalogCategory,
   dryRun: boolean,
+  limit: number | null = null,
 ) {
   const { catalogObjectExists, downloadCatalogObject } =
     await import("../lib/catalog-bucket");
@@ -309,12 +310,13 @@ export async function prepareVectors(
   const itemFiles = await discoverItemFiles(itemsDir, vectorsDir);
 
   let downloaded = 0;
-  let pendingEmbed = 0;
   let unsold = 0;
+  const pending: string[] = [];
 
   await mkdir(vectorsDir, { recursive: true });
 
   for (const itemPath of itemFiles) {
+    if (limit !== null && pending.length >= limit) break;
     const item = await readItemSummary(itemPath);
 
     if (item.status !== "sold") {
@@ -334,7 +336,7 @@ export async function prepareVectors(
     // Qdrant point existence only skips upsert, never artifact restoration.
     if (dryRun) {
       console.log(`dry-run would fetch or embed vector: ${relative}`);
-      pendingEmbed += 1;
+      pending.push(itemPath);
       continue;
     }
 
@@ -345,10 +347,10 @@ export async function prepareVectors(
       continue;
     }
 
-    pendingEmbed += 1;
+    pending.push(itemPath);
   }
 
-  return { downloaded, pendingEmbed, unsold };
+  return { downloaded, pendingEmbed: pending.length, unsold, pending };
 }
 
 async function runCategory(
@@ -426,7 +428,13 @@ async function runCategory(
   }
 
   console.log("Preparing Vector Artifacts (reuse local and bucket vectors)...");
-  const prepared = await prepareVectors(category, options.dryRun);
+  const prepared = await prepareVectors(
+    category,
+    options.dryRun,
+    options.stages.has("embed") && embedBudget.remaining !== 0
+      ? embedBudget.remaining
+      : null,
+  );
   console.log(
     `prepare vectors: downloaded ${prepared.downloaded}, pending embed ${prepared.pendingEmbed}, unsold ${prepared.unsold}`,
   );
@@ -447,7 +455,10 @@ async function runCategory(
     }
 
     console.log("Embedding images (skips existing Vector Artifacts)...");
-    const summary = await embedAuctionetVectors(parseEmbedArgs(embedArgs));
+    const summary = await embedAuctionetVectors({
+      ...parseEmbedArgs(embedArgs),
+      itemFiles: prepared.pending,
+    });
     console.log(
       `Embed summary: ${summary.embedded} items, ${summary.images} images, ${summary.skipped} skipped, ${summary.failed} failed`,
     );
@@ -577,6 +588,17 @@ async function main() {
     if (options.stages.has("scrape") && scrapeBudget === 0 && !needsLocal) {
       console.log(
         `\nScrape --max-items budget exhausted after ${totalSaved} new items; stopping`,
+      );
+      break;
+    }
+
+    if (
+      options.stages.has("embed") &&
+      !options.stages.has("scrape") &&
+      embedBudget.remaining === 0
+    ) {
+      console.log(
+        `\nEmbed --max-embed-items budget of ${options.maxEmbedItems} reached; stopping`,
       );
       break;
     }

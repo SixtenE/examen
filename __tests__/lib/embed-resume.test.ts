@@ -186,4 +186,9 @@ it("shares the cron embedding budget across categories", async () => {
     "Embed summary: 60 items, 300 images, 0 skipped, 0 failed",
     "Embed summary: 40 items, 200 images, 0 skipped, 0 failed",
   ]);
+  expect(stdout.match(/pending embed \d+/g)).toEqual([
+    "pending embed 60",
+    "pending embed 40",
+  ]);
+  expect(stdout).not.toContain("=== 1-furniture ===");
 });
