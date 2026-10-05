@@ -441,16 +441,39 @@ function buildPoints(artifact: VectorArtifact, item: AuctionetItemJson): Referen
   }));
 }
 
+const QDRANT_ATTEMPTS = 4;
+
+async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt >= QDRANT_ATTEMPTS) {
+        throw error;
+      }
+      const delayMs = 1000 * 2 ** (attempt - 1);
+      console.warn(
+        `retry ${attempt}/${QDRANT_ATTEMPTS - 1} ${label} in ${delayMs}ms: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 async function artifactAlreadySeeded(client: QdrantClient, collectionName: string, pointIds: number[]) {
   if (pointIds.length === 0) {
     return true;
   }
 
-  const records = await client.retrieve(collectionName, {
-    ids: pointIds,
-    with_payload: false,
-    with_vector: false,
-  });
+  const records = await withRetry("retrieve", () =>
+    client.retrieve(collectionName, {
+      ids: pointIds,
+      with_payload: false,
+      with_vector: false,
+    }),
+  );
 
   return records.length === pointIds.length;
 }
@@ -491,10 +514,12 @@ async function seedArtifact(
   }
 
   for (const pointBatch of chunk(points, options.batchSize)) {
-    await client.upsert(options.collectionName, {
-      wait: true,
-      points: pointBatch,
-    });
+    await withRetry("upsert", () =>
+      client.upsert(options.collectionName, {
+        wait: true,
+        points: pointBatch,
+      }),
+    );
   }
 
   console.log(`seeded: ${relativeArtifactPath} (${points.length} references)`);

@@ -1,5 +1,11 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import Page from "../app/page";
 import Providers, { queryClient } from "../components/providers";
 import { toast } from "sonner";
@@ -40,40 +46,11 @@ function mockQueriesFetch() {
 }
 
 afterEach(() => {
+  cleanup();
   vi.clearAllMocks();
   queryClient.clear();
   vi.restoreAllMocks();
-});
-
-test("submitting the form uploads the selected file", async () => {
-  const fetchMock = vi.fn().mockImplementation((url: string) => {
-    if (url === "/api/upload") {
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({ id: "abc", key: "uploads/abc" }),
-      });
-    }
-
-    if (url.startsWith("/api/queries")) {
-      return mockQueriesFetch();
-    }
-
-    return Promise.resolve({ ok: true, json: async () => ({}) });
-  });
-  vi.stubGlobal("fetch", fetchMock);
-
-  renderPage();
-
-  const file = new File(["hello"], "hello.png", { type: "image/png" });
-  const input = screen.getByLabelText("Choose image") as HTMLInputElement;
-  fireEvent.change(input, { target: { files: [file] } });
-
-  await waitFor(() => {
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/upload",
-      expect.objectContaining({ method: "POST" }),
-    );
-  });
+  vi.unstubAllGlobals();
 });
 
 test("redirects to the query page after successful upload", async () => {
@@ -81,7 +58,7 @@ test("redirects to the query page after successful upload", async () => {
     if (url === "/api/upload") {
       return Promise.resolve({
         ok: true,
-        json: async () => ({ id: "abc", key: "uploads/abc" }),
+        json: async () => ({ id: "abc" }),
       });
     }
 
@@ -109,6 +86,8 @@ test("redirects to the query page after successful upload", async () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(push).toHaveBeenCalledWith("/abc");
+    const upload = fetchMock.mock.calls.find(([url]) => url === "/api/upload");
+    expect(upload?.[1].body.get("file")).toBe(file);
   });
 });
 
@@ -140,6 +119,8 @@ test("shows an error message if the upload fails", async () => {
       "/api/upload",
       expect.objectContaining({ method: "POST" }),
     );
+    expect(toast.error).toHaveBeenCalledWith("Upload failed");
+    expect(push).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalledWith(
       "/api/queries/abc/matches",
       expect.objectContaining({ method: "POST" }),
@@ -206,9 +187,9 @@ test("renders uploaded queries from the API", async () => {
   renderPage();
 
   expect(await screen.findByText("Rare Vase")).toBeTruthy();
-  expect(screen.getByRole("link", { name: /Rare Vase/i }).getAttribute("href")).toBe(
-    "/550e8400-e29b-41d4-a716-446655440000",
-  );
+  expect(
+    screen.getByRole("link", { name: /Rare Vase/i }).getAttribute("href"),
+  ).toBe("/550e8400-e29b-41d4-a716-446655440000");
 });
 
 test("shows a rate-limit toast when the query list is rate limited", async () => {
@@ -225,37 +206,6 @@ test("shows a rate-limit toast when the query list is rate limited", async () =>
   await waitFor(() => {
     expect(toast.error).toHaveBeenCalledWith(
       "Too many requests. Try again in 8 seconds.",
-    );
-  });
-});
-
-test("shows error when uploading a file that is not an image", async () => {
-  const fetchMock = vi.fn().mockImplementation((url: string) => {
-    if (url === "/api/upload") {
-      return Promise.resolve({
-        ok: false,
-        json: async () => ({ error: "File is not an image" }),
-      });
-    }
-
-    if (url.startsWith("/api/queries")) {
-      return mockQueriesFetch();
-    }
-
-    return Promise.resolve({ ok: true, json: async () => ({}) });
-  });
-  vi.stubGlobal("fetch", fetchMock);
-
-  renderPage();
-
-  const file = new File(["hello"], "hello.txt", { type: "text/plain" });
-  const input = screen.getByLabelText("Choose image") as HTMLInputElement;
-  fireEvent.change(input, { target: { files: [file] } });
-
-  await waitFor(() => {
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/upload",
-      expect.objectContaining({ method: "POST" }),
     );
   });
 });

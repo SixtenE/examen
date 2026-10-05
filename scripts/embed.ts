@@ -1,8 +1,18 @@
 import "dotenv/config";
 
 import { constants } from "node:fs";
-import { access, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { expectedPointIds, referenceCollection } from "../lib/catalog-paths";
+import { formatDuration } from "../lib/format-duration";
 import { setTimeout as sleep } from "node:timers/promises";
 
 type CliOptions = {
@@ -12,8 +22,10 @@ type CliOptions = {
   delayMs: number;
   maxRetries: number;
   force: boolean;
+  skipIndexed: boolean;
   dryRun: boolean;
   maxItems: number | null;
+  itemFiles?: string[];
 };
 
 type AuctionetItemJson = {
@@ -46,6 +58,7 @@ type Summary = {
   unsold: number;
   failed: number;
   images: number;
+  elapsedMs: number;
 };
 
 const CATEGORY_SEGMENT_PATTERN = /^\d+-[a-z0-9-]+$/;
@@ -66,8 +79,9 @@ function usage() {
     `  --batch-size <n>       Image URLs per OpenRouter request (default: ${DEFAULT_BATCH_SIZE})`,
     `  --delay-ms <ms>        Delay between OpenRouter requests (default: ${DEFAULT_DELAY_MS})`,
     `  --max-retries <n>      Retries for 429/5xx responses (default: ${DEFAULT_MAX_RETRIES})`,
-    "  --max-items <n>        Stop after processing n item files",
+    "  --max-items <n>        Embed at most n items (existing/unsold items do not count)",
     "  --force                Regenerate existing vector files",
+    "  --skip-indexed         Skip items already in Qdrant (requires existing collections)",
     "  --dry-run              Print planned work without calling OpenRouter or writing files",
   ].join("\n");
 }
@@ -114,13 +128,14 @@ function categorySegment(dir: string, flag: string) {
   return segment;
 }
 
-function parseArgs(args: string[]): CliOptions {
+export function parseArgs(args: string[]): CliOptions {
   let itemsDir: string | null = null;
   let outDir: string | null = null;
   let batchSize = DEFAULT_BATCH_SIZE;
   let delayMs = DEFAULT_DELAY_MS;
   let maxRetries = DEFAULT_MAX_RETRIES;
   let force = false;
+  let skipIndexed = false;
   let dryRun = false;
   let maxItems: number | null = null;
 
@@ -139,20 +154,32 @@ function parseArgs(args: string[]): CliOptions {
         index += 1;
         break;
       case "--batch-size":
-        batchSize = parsePositiveInteger(readOptionValue(args, index, arg), arg);
+        batchSize = parsePositiveInteger(
+          readOptionValue(args, index, arg),
+          arg,
+        );
         index += 1;
         break;
       case "--delay-ms":
-        delayMs = parseNonNegativeInteger(readOptionValue(args, index, arg), arg);
+        delayMs = parseNonNegativeInteger(
+          readOptionValue(args, index, arg),
+          arg,
+        );
         index += 1;
         break;
       case "--max-retries":
-        maxRetries = parseNonNegativeInteger(readOptionValue(args, index, arg), arg);
+        maxRetries = parseNonNegativeInteger(
+          readOptionValue(args, index, arg),
+          arg,
+        );
         index += 1;
         break;
       case "--max-items":
         maxItems = parsePositiveInteger(readOptionValue(args, index, arg), arg);
         index += 1;
+        break;
+      case "--skip-indexed":
+        skipIndexed = true;
         break;
       case "--force":
         force = true;
@@ -178,7 +205,10 @@ function parseArgs(args: string[]): CliOptions {
   }
 
   const itemsCategory = categorySegment(itemsDir, "--items");
-  const outCategory = categorySegment(path.dirname(path.resolve(outDir)), "--out");
+  const outCategory = categorySegment(
+    path.dirname(path.resolve(outDir)),
+    "--out",
+  );
 
   if (itemsCategory !== outCategory) {
     throw new Error(
@@ -193,6 +223,7 @@ function parseArgs(args: string[]): CliOptions {
     delayMs,
     maxRetries,
     force,
+    skipIndexed,
     dryRun,
     maxItems,
   };
@@ -202,7 +233,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function validateAuctionetItem(value: unknown, filePath: string): AuctionetItemJson {
+function validateAuctionetItem(
+  value: unknown,
+  filePath: string,
+): AuctionetItemJson {
   if (!isRecord(value)) {
     throw new Error(`${filePath} must contain a JSON object`);
   }
@@ -211,7 +245,10 @@ function validateAuctionetItem(value: unknown, filePath: string): AuctionetItemJ
     throw new Error(`${filePath} is missing numeric auctionet_id`);
   }
 
-  if (!Array.isArray(value.image_urls) || !value.image_urls.every((url) => typeof url === "string")) {
+  if (
+    !Array.isArray(value.image_urls) ||
+    !value.image_urls.every((url) => typeof url === "string")
+  ) {
     throw new Error(`${filePath} is missing image_urls string array`);
   }
 
@@ -233,7 +270,10 @@ async function fileExists(filePath: string) {
   }
 }
 
-async function discoverItemFiles(itemsDir: string, skipDir: string): Promise<string[]> {
+async function discoverItemFiles(
+  itemsDir: string,
+  skipDir: string,
+): Promise<string[]> {
   const entries = await readdir(itemsDir, { withFileTypes: true });
   const files: string[] = [];
 
@@ -330,7 +370,9 @@ function extractEmbeddings(body: unknown, expectedCount: number) {
   }
 
   if (body.data.length !== expectedCount) {
-    throw new Error(`Embedding response returned ${body.data.length} vectors for ${expectedCount} inputs`);
+    throw new Error(
+      `Embedding response returned ${body.data.length} vectors for ${expectedCount} inputs`,
+    );
   }
 
   return body.data.map((entry, index) => {
@@ -339,7 +381,9 @@ function extractEmbeddings(body: unknown, expectedCount: number) {
     }
 
     if (!entry.embedding.every((value) => typeof value === "number")) {
-      throw new Error(`Embedding response vector at index ${index} contains non-numeric values`);
+      throw new Error(
+        `Embedding response vector at index ${index} contains non-numeric values`,
+      );
     }
 
     if (entry.embedding.length !== EMBEDDING_DIMENSIONS) {
@@ -352,7 +396,10 @@ function extractEmbeddings(body: unknown, expectedCount: number) {
   });
 }
 
-async function embedImageUrlBatch(imageUrls: string[], options: Pick<CliOptions, "maxRetries">) {
+async function embedImageUrlBatch(
+  imageUrls: string[],
+  options: Pick<CliOptions, "maxRetries">,
+) {
   for (let attempt = 0; attempt <= options.maxRetries; attempt += 1) {
     let response: Response;
 
@@ -406,8 +453,13 @@ async function embedImageUrlBatch(imageUrls: string[], options: Pick<CliOptions,
       );
     }
 
-    const backoffMs = getBackoffMs(attempt, response.headers.get("retry-after"));
-    console.warn(`OpenRouter returned ${response.status}; retrying in ${backoffMs}ms`);
+    const backoffMs = getBackoffMs(
+      attempt,
+      response.headers.get("retry-after"),
+    );
+    console.warn(
+      `OpenRouter returned ${response.status}; retrying in ${backoffMs}ms`,
+    );
     await sleep(backoffMs);
   }
 
@@ -427,28 +479,65 @@ async function writeJsonAtomically(filePath: string, value: unknown) {
   await rename(tempPath, filePath);
 }
 
-async function embedItem(
+export async function embedItem(
   itemPath: string,
   outputPath: string,
   options: CliOptions,
-): Promise<{ imageCount: number; skipped: boolean; unsold: boolean }> {
+): Promise<{
+  imageCount: number;
+  skipped: boolean;
+  unsold: boolean;
+  message: string;
+}> {
   const relativeItemPath = path.relative(process.cwd(), itemPath);
   const relativeOutputPath = path.relative(process.cwd(), outputPath);
   const item = await readAuctionetItem(itemPath);
 
   if (item.status !== "sold") {
-    console.log(`skip unsold: ${relativeItemPath} (status: ${item.status ?? "missing"})`);
-    return { imageCount: 0, skipped: false, unsold: true };
+    return {
+      imageCount: 0,
+      skipped: false,
+      unsold: true,
+      message: `skip unsold: ${relativeItemPath} (status: ${item.status ?? "missing"})`,
+    };
   }
 
   if (!options.force && (await fileExists(outputPath))) {
-    console.log(`skip existing: ${relativeOutputPath}`);
-    return { imageCount: 0, skipped: true, unsold: false };
+    return {
+      imageCount: 0,
+      skipped: true,
+      unsold: false,
+      message: `skip existing: ${relativeOutputPath}`,
+    };
   }
 
   if (options.dryRun) {
-    console.log(`embed: ${relativeItemPath} -> ${relativeOutputPath} (${item.image_urls.length} images)`);
-    return { imageCount: item.image_urls.length, skipped: false, unsold: false };
+    return {
+      imageCount: item.image_urls.length,
+      skipped: false,
+      unsold: false,
+      message: `embed: ${relativeItemPath} -> ${relativeOutputPath} (${item.image_urls.length} images)`,
+    };
+  }
+
+  if (options.skipIndexed && !options.force) {
+    const { qdrantClient } = await import("../lib/qdrant");
+    const ids = expectedPointIds(item.auctionet_id, item.image_urls.length);
+    const records =
+      ids.length === 0
+        ? []
+        : await qdrantClient.retrieve(
+            referenceCollection(categorySegment(options.itemsDir, "--items")),
+            { ids, with_payload: false, with_vector: false },
+          );
+    if (records.length === ids.length) {
+      return {
+        imageCount: 0,
+        skipped: true,
+        unsold: false,
+        message: `skip indexed: ${relativeItemPath}`,
+      };
+    }
   }
 
   const references: ReferenceVector[] = [];
@@ -485,51 +574,125 @@ async function embedItem(
   };
 
   await writeJsonAtomically(outputPath, artifact);
-  console.log(`wrote: ${relativeOutputPath} (${references.length} images)`);
 
-  return { imageCount: references.length, skipped: false, unsold: false };
+  return {
+    imageCount: references.length,
+    skipped: false,
+    unsold: false,
+    message: `wrote: ${relativeOutputPath} (${references.length} images)`,
+  };
 }
 
-async function embedAuctionetVectors(options: CliOptions) {
+export async function embedAuctionetVectors(options: CliOptions) {
   if (!options.dryRun && !process.env.OPENROUTER_API_KEY) {
     throw new Error("OPENROUTER_API_KEY must be set");
   }
 
   const itemsDir = path.resolve(options.itemsDir);
   const outDir = path.resolve(options.outDir);
-  const itemFiles = await discoverItemFiles(itemsDir, outDir);
-  const selectedItemFiles = options.maxItems === null ? itemFiles : itemFiles.slice(0, options.maxItems);
+  const startedAt = Date.now();
+  const itemFiles =
+    options.itemFiles ?? (await discoverItemFiles(itemsDir, outDir));
   const summary: Summary = {
     embedded: 0,
     skipped: 0,
     unsold: 0,
     failed: 0,
     images: 0,
+    elapsedMs: 0,
   };
 
-  for (const itemPath of selectedItemFiles) {
+  const pending: string[] = [];
+  for (const itemPath of itemFiles) {
+    let item: AuctionetItemJson;
+    try {
+      item = await readAuctionetItem(itemPath);
+    } catch {
+      pending.push(itemPath);
+      continue;
+    }
+
+    if (item.status !== "sold") {
+      summary.unsold += 1;
+    } else if (
+      !options.force &&
+      (await fileExists(getOutputPath(itemPath, itemsDir, outDir)))
+    ) {
+      summary.skipped += 1;
+    } else {
+      pending.push(itemPath);
+    }
+  }
+
+  console.log(
+    `embed ${path.basename(itemsDir)}: ${itemFiles.length} items -> ${pending.length} to embed (${summary.unsold} unsold, ${summary.skipped} existing)${
+      options.maxItems === null ? "" : `, limit ${options.maxItems}`
+    }`,
+  );
+
+  const loopStartedAt = Date.now();
+  let processed = 0;
+  let quickSkips = 0;
+
+  for (const itemPath of pending) {
+    if (
+      options.maxItems !== null &&
+      summary.embedded + summary.failed >= options.maxItems
+    )
+      break;
     const outputPath = getOutputPath(itemPath, itemsDir, outDir);
+    const itemStartedAt = Date.now();
+    let line: string;
+    let failed = false;
 
     try {
       const result = await embedItem(itemPath, outputPath, options);
       if (result.unsold) {
         summary.unsold += 1;
+        quickSkips += 1;
       } else if (result.skipped) {
         summary.skipped += 1;
+        quickSkips += 1;
       } else {
         summary.embedded += 1;
       }
       summary.images += result.imageCount;
+      line =
+        result.skipped || result.unsold
+          ? result.message
+          : `${result.message} ${formatDuration(Date.now() - itemStartedAt)}`;
     } catch (error) {
       summary.failed += 1;
-      console.error(
-        `failed: ${path.relative(process.cwd(), itemPath)}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      failed = true;
+      line = `failed: ${path.relative(process.cwd(), itemPath)}: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+    }
+
+    processed += 1;
+    // Skips found during the loop don't use up the --max-items budget.
+    const total = Math.min(
+      pending.length,
+      (options.maxItems ?? Infinity) + quickSkips,
+    );
+    const worked = summary.embedded + summary.failed;
+    const elapsedMs = Date.now() - loopStartedAt;
+    const eta =
+      worked === 0
+        ? "--"
+        : formatDuration((total - processed) * (elapsedMs / worked));
+    const width = String(total).length;
+    const percent = Math.floor((processed / total) * 100);
+    const status = `[${String(processed).padStart(width)}/${total} ${String(percent).padStart(3)}%] ${line} | elapsed ${formatDuration(elapsedMs)} | ETA ${eta}`;
+
+    if (failed) {
+      console.error(status);
+    } else {
+      console.log(status);
     }
   }
 
+  summary.elapsedMs = Date.now() - startedAt;
   return summary;
 }
 
@@ -538,7 +701,7 @@ async function main() {
   const summary = await embedAuctionetVectors(options);
 
   console.log(
-    `Summary: embedded ${summary.embedded}, skipped ${summary.skipped}, unsold ${summary.unsold}, failed ${summary.failed}, images ${summary.images}`,
+    `Summary: embedded ${summary.embedded}, skipped ${summary.skipped}, unsold ${summary.unsold}, failed ${summary.failed}, images ${summary.images} in ${formatDuration(summary.elapsedMs)}`,
   );
 
   if (summary.failed > 0) {
@@ -546,8 +709,13 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  console.error(usage());
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    console.error(usage());
+    process.exitCode = 1;
+  });
+}
