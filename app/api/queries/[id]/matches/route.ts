@@ -2,7 +2,7 @@ import { db } from "@/db";
 import { matches, queries } from "@/db/schema";
 import { REFERENCE_COLLECTIONS } from "@/lib/catalog-paths";
 import { embedImageUrl } from "@/lib/embeddings";
-import { parseSoldAtUnix, rankScore } from "@/lib/match-rank";
+import { parseSoldAtUnix } from "@/lib/match-rank";
 import { qdrantClient } from "@/lib/qdrant";
 import { s3Client } from "@/lib/s3";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -33,14 +33,11 @@ type ReferenceSearchHit = {
   payload?: ReferencePayload | null;
 };
 
-function compareByRankScore(
-  a: { similarity_score: number; sold_at: Date | null },
-  b: { similarity_score: number; sold_at: Date | null },
+function compareBySimilarity(
+  a: { similarity_score: number },
+  b: { similarity_score: number },
 ) {
-  return (
-    rankScore(b.similarity_score, b.sold_at) -
-    rankScore(a.similarity_score, a.sold_at)
-  );
+  return b.similarity_score - a.similarity_score;
 }
 
 export async function GET(
@@ -94,7 +91,7 @@ export async function GET(
           return map;
         }, new Map<string, (typeof results)[number]>())
         .values(),
-    ].sort(compareByRankScore);
+    ].sort(compareBySimilarity);
 
     return Response.json(uniqueResults);
   } catch (error) {
@@ -236,7 +233,7 @@ export async function POST(
         }, new Map<string, (typeof rows)[number]>())
         .values(),
     ]
-      .sort(compareByRankScore)
+      .sort(compareBySimilarity)
       .slice(0, MATCH_LIMIT);
 
     const persisted = await withSpan(

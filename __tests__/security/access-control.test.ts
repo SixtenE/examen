@@ -17,7 +17,7 @@ const mockQdrantQuery = vi.fn().mockResolvedValue({ points: [] });
 const queryRow = {
   id: QUERY_ID,
   title: "Golden Clock",
-  image_key: "img-key",
+  image_key: "V1StGXR8_Z5jdHi6B-myT",
   status: "ready" as const,
   createdAt: new Date("2026-06-11T10:00:00Z"),
 };
@@ -262,7 +262,7 @@ describe("cost & access control: POST /api/queries/[id]/matches", () => {
     expect(mockGetSignedUrl).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        input: expect.objectContaining({ Key: "img-key" }),
+        input: expect.objectContaining({ Key: "V1StGXR8_Z5jdHi6B-myT" }),
       }),
       expect.objectContaining({ expiresIn: 300 }),
     );

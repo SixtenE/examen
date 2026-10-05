@@ -4,10 +4,12 @@ import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { embedAuctionetVectors, parseArgs as parseEmbedArgs } from "./embed";
+import { pathToFileURL } from "node:url";
 import {
   discoverCompanyLeafCategories,
   INCREMENTAL_LISTING_ORDER,
-  listingOrdersForSegment,
+  archiveListingOrders,
 } from "../lib/auctionet-leaves";
 import {
   AUCTIONET_LEAF_CATEGORIES,
@@ -16,11 +18,9 @@ import {
   categoryVectorsBucketPrefix,
   categoryVectorsDir,
   CRAFOORD_STOCKHOLM_COMPANY_ID,
-  expectedPointIds,
   localPathToBucketKey,
   parseCatalogCategories,
   parsePipelineStages,
-  referenceCollection,
   type CatalogCategory,
   type PipelineStage,
 } from "../lib/catalog-paths";
@@ -30,9 +30,11 @@ type PipelineMode = "backfill" | "incremental";
 type CliOptions = {
   categories: CatalogCategory[];
   dryRun: boolean;
+  force: boolean;
   stages: Set<PipelineStage>;
   maxPages: number | null;
   maxItems: number | null;
+  maxEmbedItems: number | null;
   mode: PipelineMode;
   discoverLeaves: boolean;
   companyId: number;
@@ -58,6 +60,8 @@ function usage() {
     "  --discover-leaves          Refresh leaf categories from Auctionet facets",
     `  --company-id <n>           Company for --discover-leaves (default: ${CRAFOORD_STOCKHOLM_COMPANY_ID})`,
     "  --dry-run                  Print planned work without side effects",
+    "  --force                    Forwarded to upsert (rewrite existing Qdrant payloads)",
+    "  --max-embed-items <n>      Max new embedding items across all categories",
     "  --max-pages <n>            Forwarded to scrape",
     "  --max-items <n>            Max newly scraped items across categories (skips excluded)",
   ].join("\n");
@@ -88,9 +92,11 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
 } {
   const categoryArgs: string[] = [];
   let dryRun = false;
+  let force = false;
   let stages = parsePipelineStages(undefined);
   let maxPages: number | null = null;
   let maxItems: number | null = null;
+  let maxEmbedItems: number | null = null;
   let mode: PipelineMode = "backfill";
   let discoverLeaves = false;
   let companyId = CRAFOORD_STOCKHOLM_COMPANY_ID;
@@ -131,8 +137,18 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
       case "--dry-run":
         dryRun = true;
         break;
+      case "--force":
+        force = true;
+        break;
       case "--max-pages":
         maxPages = parsePositiveInteger(readOptionValue(args, index, arg), arg);
+        index += 1;
+        break;
+      case "--max-embed-items":
+        maxEmbedItems = parsePositiveInteger(
+          readOptionValue(args, index, arg),
+          arg,
+        );
         index += 1;
         break;
       case "--max-items":
@@ -151,9 +167,11 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
   return {
     categoryArgs,
     dryRun,
+    force,
     stages,
     maxPages,
     maxItems,
+    maxEmbedItems,
     mode,
     discoverLeaves,
     companyId,
@@ -280,41 +298,25 @@ function parseScrapeSaved(output: string) {
   return Number(matches[matches.length - 1][1]);
 }
 
-async function artifactAlreadySeeded(
-  collectionName: string,
-  pointIds: number[],
+export async function prepareVectors(
+  category: CatalogCategory,
+  dryRun: boolean,
+  limit: number | null = null,
 ) {
-  if (pointIds.length === 0) {
-    return true;
-  }
-
-  const { qdrantClient } = await import("../lib/qdrant");
-  const records = await qdrantClient.retrieve(collectionName, {
-    ids: pointIds,
-    with_payload: false,
-    with_vector: false,
-  });
-
-  return records.length === pointIds.length;
-}
-
-async function prepareVectors(category: CatalogCategory, dryRun: boolean) {
-  const { catalogObjectExists, downloadCatalogObject } = await import(
-    "../lib/catalog-bucket"
-  );
+  const { catalogObjectExists, downloadCatalogObject } =
+    await import("../lib/catalog-bucket");
   const itemsDir = categoryItemsDir(category.segment);
   const vectorsDir = categoryVectorsDir(category.segment);
-  const collectionName = referenceCollection(category.segment);
   const itemFiles = await discoverItemFiles(itemsDir, vectorsDir);
 
-  let alreadyInQdrant = 0;
   let downloaded = 0;
-  let pendingEmbed = 0;
   let unsold = 0;
+  const pending: string[] = [];
 
   await mkdir(vectorsDir, { recursive: true });
 
   for (const itemPath of itemFiles) {
+    if (limit !== null && pending.length >= limit) break;
     const item = await readItemSummary(itemPath);
 
     if (item.status !== "sold") {
@@ -330,17 +332,11 @@ async function prepareVectors(category: CatalogCategory, dryRun: boolean) {
       continue;
     }
 
-    const pointIds = expectedPointIds(item.auctionet_id, item.image_urls.length);
-
-    if (!dryRun && (await artifactAlreadySeeded(collectionName, pointIds))) {
-      alreadyInQdrant += 1;
-      console.log(`skip seeded: ${relative}`);
-      continue;
-    }
-
+    // Restore durable artifacts before embed checks for local files.
+    // Qdrant point existence only skips upsert, never artifact restoration.
     if (dryRun) {
       console.log(`dry-run would fetch or embed vector: ${relative}`);
-      pendingEmbed += 1;
+      pending.push(itemPath);
       continue;
     }
 
@@ -351,16 +347,17 @@ async function prepareVectors(category: CatalogCategory, dryRun: boolean) {
       continue;
     }
 
-    pendingEmbed += 1;
+    pending.push(itemPath);
   }
 
-  return { alreadyInQdrant, downloaded, pendingEmbed, unsold };
+  return { downloaded, pendingEmbed: pending.length, unsold, pending };
 }
 
 async function runCategory(
   category: CatalogCategory,
   options: CliOptions,
   scrapeMaxItems: number | null,
+  embedBudget: { remaining: number | null },
 ) {
   const itemsDir = categoryItemsDir(category.segment);
   const vectorsDir = categoryVectorsDir(category.segment);
@@ -385,10 +382,7 @@ async function runCategory(
         scrapeArgs.push("--orders", INCREMENTAL_LISTING_ORDER);
         scrapeArgs.push("--incremental");
       } else {
-        scrapeArgs.push(
-          "--orders",
-          listingOrdersForSegment(category.segment).join(","),
-        );
+        scrapeArgs.push("--orders", archiveListingOrders().join(","));
       }
 
       console.log(
@@ -421,7 +415,9 @@ async function runCategory(
 
   await mkdir(itemsDir, { recursive: true });
 
-  console.log("Syncing Auctionet Item JSON from bucket (skip existing local)...");
+  console.log(
+    "Syncing Auctionet Item JSON from bucket (skip existing local)...",
+  );
   if (options.dryRun) {
     console.log(`dry-run sync down: ${itemsPrefix}`);
   } else {
@@ -431,31 +427,46 @@ async function runCategory(
     );
   }
 
-  console.log(
-    "Preparing Vector Artifacts (skip Qdrant duplicates, reuse bucket vectors)...",
+  console.log("Preparing Vector Artifacts (reuse local and bucket vectors)...");
+  const prepared = await prepareVectors(
+    category,
+    options.dryRun,
+    options.stages.has("embed") && embedBudget.remaining !== 0
+      ? embedBudget.remaining
+      : null,
   );
-  const prepared = await prepareVectors(category, options.dryRun);
   console.log(
-    `prepare vectors: qdrant-skip ${prepared.alreadyInQdrant}, downloaded ${prepared.downloaded}, pending embed ${prepared.pendingEmbed}, unsold ${prepared.unsold}`,
+    `prepare vectors: downloaded ${prepared.downloaded}, pending embed ${prepared.pendingEmbed}, unsold ${prepared.unsold}`,
   );
 
-  if (options.stages.has("embed")) {
-    const embedArgs = ["--items", itemsDir, "--out", vectorsDir];
-    if (options.maxItems !== null) {
-      embedArgs.push("--max-items", String(options.maxItems));
+  if (options.stages.has("embed") && embedBudget.remaining !== 0) {
+    const embedArgs = [
+      "--items",
+      itemsDir,
+      "--out",
+      vectorsDir,
+    ];
+    if (options.stages.has("upsert")) embedArgs.push("--skip-indexed");
+    if (embedBudget.remaining !== null) {
+      embedArgs.push("--max-items", String(embedBudget.remaining));
     }
     if (options.dryRun) {
       embedArgs.push("--dry-run");
     }
 
     console.log("Embedding images (skips existing Vector Artifacts)...");
-    const embedResult = await runScript(
-      "scripts/embed.ts",
-      embedArgs,
-      false,
+    const summary = await embedAuctionetVectors({
+      ...parseEmbedArgs(embedArgs),
+      itemFiles: prepared.pending,
+    });
+    console.log(
+      `Embed summary: ${summary.embedded} items, ${summary.images} images, ${summary.skipped} skipped, ${summary.failed} failed`,
     );
-    if (embedResult.code !== 0) {
-      throw new Error(`embed exited with code ${embedResult.code}`);
+    if (embedBudget.remaining !== null) {
+      embedBudget.remaining -= summary.embedded + summary.failed;
+    }
+    if (summary.failed > 0) {
+      throw new Error(`Embedding failed for ${summary.failed} items`);
     }
   }
 
@@ -479,8 +490,15 @@ async function runCategory(
     if (options.dryRun) {
       upsertArgs.push("--dry-run");
     }
+    if (options.force) {
+      upsertArgs.push("--force");
+    }
 
-    console.log("Upserting Qdrant (skips artifacts whose points already exist)...");
+    console.log(
+      options.force
+        ? "Upserting Qdrant (force: rewriting existing payloads)..."
+        : "Upserting Qdrant (skips artifacts whose points already exist)...",
+    );
     const upsertResult = await runScript(
       "scripts/upsert.ts",
       upsertArgs,
@@ -526,9 +544,11 @@ async function main() {
   const options: CliOptions = {
     categories,
     dryRun: parsed.dryRun,
+    force: parsed.force,
     stages: parsed.stages,
     maxPages: parsed.maxPages,
     maxItems: parsed.maxItems,
+    maxEmbedItems: parsed.maxEmbedItems,
     mode: parsed.mode,
     discoverLeaves: parsed.discoverLeaves,
     companyId: parsed.companyId,
@@ -549,8 +569,8 @@ async function main() {
     options.stages.has("store") ||
     options.stages.has("upsert");
 
-  // prepareVectors retrieves point IDs before upsert creates collections; ensure all leaves first.
-  if (!options.dryRun && needsLocal) {
+  // Search requires every leaf collection, including empty categories.
+  if (!options.dryRun && options.stages.has("upsert")) {
     const { ensureReferenceCollection } = await import("../lib/qdrant");
     console.log(
       `Ensuring ${AUCTIONET_LEAF_CATEGORIES.length} Qdrant collections...`,
@@ -561,6 +581,7 @@ async function main() {
   }
 
   let scrapeBudget = options.maxItems;
+  const embedBudget = { remaining: options.maxEmbedItems };
   let totalSaved = 0;
 
   for (const category of options.categories) {
@@ -571,7 +592,23 @@ async function main() {
       break;
     }
 
-    const saved = await runCategory(category, options, scrapeBudget);
+    if (
+      options.stages.has("embed") &&
+      !options.stages.has("scrape") &&
+      embedBudget.remaining === 0
+    ) {
+      console.log(
+        `\nEmbed --max-embed-items budget of ${options.maxEmbedItems} reached; stopping`,
+      );
+      break;
+    }
+
+    const saved = await runCategory(
+      category,
+      options,
+      scrapeBudget,
+      embedBudget,
+    );
     totalSaved += saved;
     if (scrapeBudget !== null) {
       scrapeBudget = Math.max(0, scrapeBudget - saved);
@@ -587,19 +624,20 @@ async function main() {
   console.log("\nCatalog pipeline finished");
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    console.error(usage());
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    // Destroy the S3 client so Railway cron exits instead of hanging on open handles.
-    // QdrantClient has no close/destroy API; it uses plain fetch.
-    try {
-      const { s3Client } = await import("../lib/s3");
-      s3Client.destroy();
-    } catch {
-      // S3 may be unset in dry local exploration.
-    }
-  });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+  main()
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : error);
+      console.error(usage());
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      // Destroy the S3 client so Railway cron exits instead of hanging on open handles.
+      // QdrantClient has no close/destroy API; it uses plain fetch.
+      try {
+        const { s3Client } = await import("../lib/s3");
+        s3Client.destroy();
+      } catch {
+        // S3 may be unset in dry local exploration.
+      }
+    });

@@ -44,6 +44,7 @@ afterEach(() => {
   vi.clearAllMocks();
   queryClient.clear();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 test("deletes the query and navigates home on confirm", async () => {

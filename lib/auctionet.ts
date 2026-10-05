@@ -188,6 +188,22 @@ export function extractAuctionetItemUrls(html: string, baseUrl: URL) {
     }
   }
 
+  // Catalogue (event) lots link to /events/{event}/{lot}-slug, which carries no
+  // Auctionet id; /{lang}/{id} redirects to the regular item page.
+  const eventItemPattern =
+    /\{"id":(\d{5,}),[^{}]*?"url":"\/(?:([a-z]{2})\/)?events\//gi;
+
+  for (const match of decodedHtml.matchAll(eventItemPattern)) {
+    const auctionetId = Number(match[1]);
+
+    if (!itemUrls.has(auctionetId)) {
+      itemUrls.set(
+        auctionetId,
+        new URL(`/${match[2] ?? "en"}/${auctionetId}`, baseUrl),
+      );
+    }
+  }
+
   return Array.from(itemUrls.values());
 }
 

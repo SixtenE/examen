@@ -112,6 +112,9 @@ pnpm cron -- --stages embed,store --category 9-ceramics-porcelain
 # Embed + store + upsert Qdrant
 pnpm cron -- --stages embed,store,upsert --category 9-ceramics-porcelain
 
+# One-shot: rewrite existing Qdrant payloads (e.g. after adding Sold At). Do not use on scheduled cron.
+pnpm cron -- --stages upsert --force
+
 # Or run individual scripts after local item JSON exists:
 pnpm embed -- \
   --items data/auctionet/items/9-ceramics-porcelain \
@@ -124,26 +127,42 @@ pnpm upsert -- \
 
 `--stages` accepts any comma list of `scrape`, `embed`, `store`, `upsert` (default: all four). Bucket→local sync is implicit whenever embed, store, or upsert is selected.
 
-### Daily automation on Railway
+### Scheduled automation on Railway
 
 `pnpm cron` runs the selected stages for each configured Auctionet Category:
 
 1. **scrape** — Auctionet Item JSON to the bucket (`HeadObject` skip)
 2. Sync items down from the bucket (implicit when embed/store/upsert run)
-3. **embed** — reuse Vector Artifacts already in Qdrant or the bucket; embed only the rest
+3. **embed** — restore missing local Vector Artifacts from the bucket; embed only items without a local or bucket artifact
 4. **store** — Vector Artifacts to the bucket (`HeadObject` skip)
 5. **upsert** — Qdrant upsert (skip artifacts whose deterministic point IDs already exist)
 
-Create **separate** Railway services for cron (do not put schedules on the web app):
+Railway services, including their start commands and cron schedules, are defined in [`.railway/railway.ts`](.railway/railway.ts) (Railway Infrastructure as Code). Preview changes with `railway config plan`, then apply with `railway config apply`. Cron runs on **separate** services, not the web app:
 
-- Scrape-only: point at `railway.scrape.toml` — every 30 minutes, `--stages scrape`
+- `scrape`: every 30 minutes, `--stages scrape`
+- `embed` (catalog indexing): hourly on the hour (UTC), `--stages embed,store,upsert --max-embed-items 50`. Each run embeds up to 50 new items across all categories, including every image of each item (50 items with 5 images each = 250 images). Existing vectors, fully indexed items, and unsold items do not consume the budget. Failed items consume a slot to bound attempted work. Give it the same bucket credentials, `OPENROUTER_API_KEY`, `QDRANT_URL`, and `QDRANT_API_KEY`.
+
+For the initial catch-up, run one category first, then the full backlog:
+
+```bash
+pnpm cron -- --stages embed,store,upsert --category 9-ceramics-porcelain
+pnpm cron -- --stages embed,store,upsert
+```
+
+Use the same `CATALOG_CATEGORIES` as the scraper, or leave it unset for all supported leaves. Check each stage's summary for zero failures and confirm new references appear in Qdrant before enabling the hourly schedule. Run only one indexing worker at a time to avoid duplicate embedding charges. The scraper can continue separately.
+
+Existing local vectors are reused; missing vectors are retrieved from the bucket where needed. When upsert is selected, items already fully indexed in Qdrant are skipped even on a fresh worker. Embed/store-only runs reuse saved artifacts without requiring Qdrant. Keep `store` enabled to preserve newly generated vectors for future runs. Do not use `--force` or `--recreate` for ordinary catch-up.
+
+Use `--max-embed-items 50` to limit new embedding work across categories, or omit it for an uncapped manual catch-up. `--max-items` controls scraping and caps upsert files scanned per category; avoid it for indexing catch-up. A dry run only examines local files and does not sync the bucket or check Qdrant, so it is not an accurate backlog or cost estimate.
+
+Vectors are stored after a category's embedding stage succeeds. If embedding fails, successful local vectors remain on that worker; run `--stages store` on the same disk before discarding it, then retry the full pipeline. A worker lost before storage may require some embeddings to be generated again.
 
 ```bash
 # Local dry run of the orchestrator
 pnpm cron -- --dry-run --max-pages 1 --max-items 5
 
-# Scrape-only (same as railway.scrape.toml)
-pnpm cron -- --stages scrape --mode incremental --max-items 500
+# Scrape-only (same as the scrape service)
+pnpm cron -- --stages scrape --mode backfill --max-items 500
 ```
 
 Extra env for the cron services (in addition to the app vars; embed/upsert also need OpenRouter/Qdrant):
@@ -166,7 +185,7 @@ Bucket keys live under `scrape/...` so they never collide with Query image Keys.
 - [Qdrant selection](./docs/adr/0002-qdrant-for-vector-storage.md)
 - [Match generation lifecycle](./docs/adr/0003-page-driven-match-generation.md)
 - [Deterministic vector IDs](./docs/adr/0004-deterministic-qdrant-reference-point-ids.md)
-- [Daily catalog pipeline](./docs/adr/0008-daily-catalog-pipeline-on-railway.md)
+- [Scheduled catalog pipeline](./docs/adr/0008-daily-catalog-pipeline-on-railway.md)
 
 ## Scripts
 
@@ -180,3 +199,5 @@ pnpm embed                      # Generate catalog embeddings
 pnpm upsert                     # Upsert References into Qdrant
 pnpm cron                       # Stages: scrape → embed → store → upsert
 ```
+
+The scheduled scrape uses backfill with a 500-new-item budget. Every category is traversed in oldest/newest end-date and ascending/descending estimate order to reach beyond an individual listing’s page cap. Duplicate Auctionet IDs are skipped within the run and existing item objects are skipped in the bucket. Runs restart listings rather than persisting page positions. An uncapped, unbudgeted completion must cover the advertised count; otherwise scraping fails visibly instead of silently accepting an incomplete archive. Sort-order unions cannot guarantee coverage for arbitrarily large categories; such failures require narrower filters.

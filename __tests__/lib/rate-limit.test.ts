@@ -23,18 +23,16 @@ describe("rate limit helper", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
-    process.env.REDIS_URL = "redis://localhost:6379";
-    delete process.env.API_RATE_LIMIT_REQUESTS;
-    delete process.env.API_RATE_LIMIT_WINDOW_SECONDS;
+    vi.stubEnv("REDIS_URL", "redis://localhost:6379");
+    vi.stubEnv("API_RATE_LIMIT_REQUESTS", undefined);
+    vi.stubEnv("API_RATE_LIMIT_WINDOW_SECONDS", undefined);
     mockRedisClient.connect.mockResolvedValue(mockRedisClient);
     mockRedisClient.on.mockReturnValue(mockRedisClient);
     mockRedisClient.sendCommand.mockResolvedValue([1, 60_000]);
   });
 
   afterEach(() => {
-    delete process.env.REDIS_URL;
-    delete process.env.API_RATE_LIMIT_REQUESTS;
-    delete process.env.API_RATE_LIMIT_WINDOW_SECONDS;
+    vi.unstubAllEnvs();
   });
 
   it("allows requests under the configured limit", async () => {
@@ -119,4 +117,26 @@ describe("rate limit helper", () => {
     const secondKey = mockRedisClient.sendCommand.mock.calls[1][0][3];
     expect(firstKey).toBe(secondKey);
   });
+
+  it.each([false, true])(
+    "handles Redis command failures with failClosed=%s",
+    async (failClosed) => {
+      mockRedisClient.sendCommand.mockRejectedValueOnce(
+        new Error("Redis unavailable"),
+      );
+      const { enforceRateLimit } = await import("@/lib/rate-limit");
+
+      const response = await enforceRateLimit(makeRequest(), {
+        scope: "api:test",
+        failClosed,
+      });
+
+      if (failClosed) {
+        expect(response?.status).toBe(503);
+        expect(response?.headers.get("Retry-After")).toBe("5");
+      } else {
+        expect(response).toBeNull();
+      }
+    },
+  );
 });

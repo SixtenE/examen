@@ -125,7 +125,7 @@ describe("GET /api/queries/[id]/matches", () => {
     vi.useRealTimers();
   });
 
-  it("deduplicates matches by auctionet_id and ranks by recency-weighted score", async () => {
+  it("deduplicates matches by auctionet_id and ranks by similarity alone", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-24T12:00:00Z"));
 
@@ -135,10 +135,10 @@ describe("GET /api/queries/[id]/matches", () => {
 
     expect(response.status).toBe(200);
     expect(body).toHaveLength(2);
-    expect(body[0].auctionet_id).toBe("lot-2");
-    expect(body[0].similarity_score).toBe(0.85);
-    expect(body[1].auctionet_id).toBe("lot-1");
-    expect(body[1].similarity_score).toBe(0.92);
+    expect(body[0].auctionet_id).toBe("lot-1");
+    expect(body[0].similarity_score).toBe(0.92);
+    expect(body[1].auctionet_id).toBe("lot-2");
+    expect(body[1].similarity_score).toBe(0.85);
   });
 
   it("returns 404 for invalid UUIDs", async () => {
@@ -165,6 +165,7 @@ describe("GET /api/queries/[id]/matches", () => {
 describe("POST /api/queries/[id]/matches", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.clearAllMocks();
     mockSearch.mockReset();
     mockSearch.mockImplementation((collection: string) => {
       if (collection === "references-28-paintings") {
@@ -283,7 +284,7 @@ describe("POST /api/queries/[id]/matches", () => {
     ).toBe(false);
   });
 
-  it("ranks a recent mid score above an old high score", async () => {
+  it("ranks by similarity regardless of old or missing sale dates", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-24T12:00:00Z"));
 
@@ -292,6 +293,7 @@ describe("POST /api/queries/[id]/matches", () => {
         return Promise.resolve([
           hit("old-high", 0.92, FIVE_YEARS_AGO_UNIX),
           hit("recent-mid", 0.85, MONTH_AGO_UNIX),
+          hit("undated-highest", 0.99, null),
         ]);
       }
 
@@ -307,31 +309,38 @@ describe("POST /api/queries/[id]/matches", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toHaveLength(2);
-    expect(body[0].auctionet_id).toBe("recent-mid");
-    expect(body[0].similarity_score).toBe(0.85);
+    expect(body).toHaveLength(3);
+    expect(body[0].auctionet_id).toBe("undated-highest");
+    expect(body[0].similarity_score).toBe(0.99);
     expect(body[1].auctionet_id).toBe("old-high");
     expect(body[1].similarity_score).toBe(0.92);
+    expect(body[2].auctionet_id).toBe("recent-mid");
+    expect(body[2].similarity_score).toBe(0.85);
   });
 
-  it("does not regenerate matches for a ready query", async () => {
-    vi.doMock("@/db", () => {
-      const mockDb = createDbMock({
-        updateReturning: [],
-        selectResults: [[{ id: QUERY_ID, status: "ready" }]],
+  it.each(["ready", "processing"])(
+    "does not regenerate matches for a %s query",
+    async (status) => {
+      vi.doMock("@/db", () => {
+        const mockDb = createDbMock({
+          updateReturning: [],
+          selectResults: [[{ id: QUERY_ID, status }]],
+        });
+        return { db: mockDb.db };
       });
-      return { db: mockDb.db };
-    });
 
-    const { POST } = await import("@/app/api/queries/[id]/matches/route");
-    const response = await POST(makeRequest("POST"), { params });
+      const { POST } = await import("@/app/api/queries/[id]/matches/route");
+      const response = await POST(makeRequest("POST"), { params });
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ status: "ready" });
-    expect(mockSearch).not.toHaveBeenCalled();
-  });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ status });
+      expect(mockEmbedImageUrl).not.toHaveBeenCalled();
+      expect(mockSearch).not.toHaveBeenCalled();
+    },
+  );
 
-  it("does not expose upstream error details", async () => {
+  it("marks failed generation as retryable without exposing upstream errors", async () => {
+    const { db } = await import("@/db");
     mockEmbedImageUrl.mockRejectedValueOnce(
       new Error("secret upstream detail"),
     );
@@ -340,6 +349,9 @@ describe("POST /api/queries/[id]/matches", () => {
     const response = await POST(makeRequest("POST"), { params });
 
     expect(response.status).toBe(500);
+    const statusUpdate = vi.mocked(db.update).mock.results.at(-1)?.value;
+    expect(statusUpdate.set).toHaveBeenCalledWith({ status: "failed" });
+    expect(mockSearch).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toEqual({
       error: "Internal server error",
     });

@@ -73,16 +73,76 @@ describe("GET /api/queries", () => {
     expect(body.error).toBe("Invalid cursor");
   });
 
-  it("clamps limit between 1 and 50", async () => {
-    const { db } = await import("@/db");
+  it.each([
+    ["999", 51],
+    ["0", 2],
+    ["-1", 2],
+    ["invalid", 13],
+  ])(
+    "bounds limit %s (including the lookahead row)",
+    async (limit, expected) => {
+      const { db } = await import("@/db");
+      const { GET } = await import("@/app/api/queries/route");
+
+      await GET(makeRequest(`/api/queries?limit=${limit}`));
+
+      const chain = vi
+        .mocked(db.select)
+        .mock.results.at(-1)
+        ?.value.from.mock.results.at(-1)?.value;
+      expect(chain?.limit).toHaveBeenCalledWith(expected);
+    },
+  );
+
+  it("returns a cursor for the last visible item, excluding the lookahead row", async () => {
+    const rows = [
+      {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "First",
+        createdAt: new Date("2026-06-11T10:00:00Z"),
+      },
+      {
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        title: "Second",
+        createdAt: new Date("2026-06-10T10:00:00Z"),
+      },
+    ];
+    vi.doMock("@/db", () => ({
+      db: createDbMock({ selectResults: [rows] }).db,
+    }));
     const { GET } = await import("@/app/api/queries/route");
 
-    await GET(makeRequest("/api/queries?limit=999"));
+    const response = await GET(makeRequest("/api/queries?limit=1"));
+    const body = await response.json();
 
-    const chain = vi
-      .mocked(db.select)
-      .mock.results.at(-1)
-      ?.value.from.mock.results.at(-1)?.value;
-    expect(chain?.limit).toHaveBeenCalledWith(51);
+    expect(response.status).toBe(200);
+    expect(body.items.map((item: { id: string }) => item.id)).toEqual([
+      rows[0].id,
+    ]);
+    expect(
+      JSON.parse(Buffer.from(body.nextCursor, "base64url").toString()),
+    ).toEqual({
+      id: rows[0].id,
+      createdAt: rows[0].createdAt.toISOString(),
+    });
   });
+
+  it.each([
+    null,
+    {},
+    { id: "not-a-uuid", createdAt: "2026-06-11T10:00:00Z" },
+    { id: OWNER_ID, createdAt: "not-a-date" },
+  ])(
+    "rejects malformed cursor data %j without querying the database",
+    async (cursor) => {
+      const { db } = await import("@/db");
+      const { GET } = await import("@/app/api/queries/route");
+      const encoded = Buffer.from(JSON.stringify(cursor)).toString("base64url");
+
+      expect(
+        (await GET(makeRequest(`/api/queries?cursor=${encoded}`))).status,
+      ).toBe(400);
+      expect(db.select).not.toHaveBeenCalled();
+    },
+  );
 });
