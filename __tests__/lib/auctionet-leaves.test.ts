@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractCategoryFacets,
   extractEndedItemCount,
-  listingOrdersForSegment,
+  archiveListingOrders,
   withListingOrder,
 } from "@/lib/auctionet-leaves";
 
@@ -83,15 +83,12 @@ describe("auctionet-leaves", () => {
     expect(extractEndedItemCount(FACET_HTML)).toBe(24148);
   });
 
-  it("uses multi-order only for oversized paintings", () => {
-    expect(listingOrdersForSegment("28-paintings")).toEqual([
+  it("uses archive orders for every category", () => {
+    expect(archiveListingOrders()).toEqual([
       "end_asc_archive",
       "end_desc",
       "estimate_asc",
       "estimate_desc",
-    ]);
-    expect(listingOrdersForSegment("9-ceramics-porcelain")).toEqual([
-      "sold_recent",
     ]);
   });
 

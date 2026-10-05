@@ -260,18 +260,52 @@ export function extractAuctionetItemUrls(html: string, baseUrl: URL) {
     }
   }
 
+  // Catalogue (event) lots link to /events/{event}/{lot}-slug, which carries no
+  // Auctionet id; /{lang}/{id} redirects to the regular item page.
+  const eventItemPattern =
+    /\{"id":(\d{5,}),[^{}]*?"url":"\/(?:([a-z]{2})\/)?events\//gi;
+
+  for (const match of decodedHtml.matchAll(eventItemPattern)) {
+    const auctionetId = Number(match[1]);
+
+    if (!itemUrls.has(auctionetId)) {
+      itemUrls.set(
+        auctionetId,
+        new URL(`/${match[2] ?? "en"}/${auctionetId}`, baseUrl),
+      );
+    }
+  }
+
   return Array.from(itemUrls.values());
 }
 
 export function extractNextListingPageUrl(html: string, currentUrl: URL) {
-  const anchors = extractAnchorElements(html, currentUrl);
+  const currentPage = Number(currentUrl.searchParams.get("page") ?? "1");
+  const currentParams = new URLSearchParams(currentUrl.searchParams);
+  currentParams.delete("page");
+  currentParams.sort();
+
+  const anchors = extractAnchorElements(html, currentUrl).filter((anchor) => {
+    const page = Number(anchor.href.searchParams.get("page") ?? "1");
+    const params = new URLSearchParams(anchor.href.searchParams);
+    params.delete("page");
+    params.sort();
+    anchor.href.hash = "";
+
+    return (
+      anchor.href.origin === currentUrl.origin &&
+      anchor.href.pathname === currentUrl.pathname &&
+      params.toString() === currentParams.toString() &&
+      Number.isSafeInteger(page) &&
+      page > currentPage
+    );
+  });
 
   const relNext = anchors.find((anchor) =>
     anchor.attributes.rel?.toLowerCase().split(/\s+/).includes("next"),
   );
 
   if (relNext) {
-    relNext.href.hash = "";
     return relNext.href;
   }
 
@@ -288,17 +322,11 @@ export function extractNextListingPageUrl(html: string, currentUrl: URL) {
   });
 
   if (textNext) {
-    textNext.href.hash = "";
     return textNext.href;
   }
 
-  const currentPage = Number(currentUrl.searchParams.get("page") ?? "1");
   const numericPageLinks = anchors
-    .map((anchor) => {
-      const page = Number(anchor.href.searchParams.get("page"));
-      return Number.isInteger(page) && page > currentPage ? anchor.href : null;
-    })
-    .filter((url): url is URL => url !== null)
+    .map((anchor) => anchor.href)
     .sort(
       (left, right) =>
         Number(left.searchParams.get("page")) -

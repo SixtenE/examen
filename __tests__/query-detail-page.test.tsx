@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import QueryDetailPage from "../app/[id]/page";
 import Providers, { queryClient } from "../components/providers";
 import { toast } from "sonner";
@@ -88,9 +88,11 @@ function renderPage() {
 }
 
 afterEach(() => {
+  cleanup();
   vi.clearAllMocks();
   queryClient.clear();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 test("renders query title and matches", async () => {

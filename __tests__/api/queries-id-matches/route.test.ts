@@ -5,7 +5,6 @@ import { createDbMock } from "../../helpers/mock-db";
 
 const QUERY_ID = "550e8400-e29b-41d4-a716-446655440000";
 const OWNER_ID = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
-const IMAGE_KEY = "V1StGXR8_Z5jdHi6B-myT";
 const params = Promise.resolve({ id: QUERY_ID });
 
 const mockGetSignedUrl = vi
@@ -70,7 +69,7 @@ describe("GET /api/queries/[id]/matches", () => {
             {
               id: QUERY_ID,
               title: "Golden Clock",
-              image_key: IMAGE_KEY,
+              image_key: "V1StGXR8_Z5jdHi6B-myT",
               status: "ready",
               createdAt: new Date("2026-06-11T10:00:00Z"),
             },
@@ -140,7 +139,7 @@ describe("GET /api/queries/[id]/matches", () => {
     vi.useRealTimers();
   });
 
-  it("deduplicates matches by auctionet_id and ranks by recency-weighted score", async () => {
+  it("deduplicates matches by auctionet_id and ranks by similarity alone", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-24T12:00:00Z"));
 
@@ -150,10 +149,10 @@ describe("GET /api/queries/[id]/matches", () => {
 
     expect(response.status).toBe(200);
     expect(body).toHaveLength(2);
-    expect(body[0].auctionet_id).toBe("1002");
-    expect(body[0].similarity_score).toBe(0.85);
-    expect(body[1].auctionet_id).toBe("1001");
-    expect(body[1].similarity_score).toBe(0.92);
+    expect(body[0].auctionet_id).toBe("1001");
+    expect(body[0].similarity_score).toBe(0.92);
+    expect(body[1].auctionet_id).toBe("1002");
+    expect(body[1].similarity_score).toBe(0.85);
   });
 
   it("returns 404 for invalid UUIDs", async () => {
@@ -180,6 +179,7 @@ describe("GET /api/queries/[id]/matches", () => {
 describe("POST /api/queries/[id]/matches", () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.clearAllMocks();
     mockSearch.mockReset();
     mockSearch.mockImplementation((collection: string) => {
       if (collection === "references-28-paintings") {
@@ -187,7 +187,10 @@ describe("POST /api/queries/[id]/matches", () => {
           hit("2000", 0.95, MONTH_AGO_UNIX),
           hit("2000", 0.8, MONTH_AGO_UNIX),
           ...Array.from({ length: 20 }, (_, index) =>
-            hit(String(index + 2), 0.94 - index * 0.01),
+            hit(
+              String(index + 2),
+              0.94 - index * 0.01,
+            ),
           ),
         ]);
       }
@@ -196,7 +199,10 @@ describe("POST /api/queries/[id]/matches", () => {
         return Promise.resolve([
           hit("2000", 0.85, MONTH_AGO_UNIX),
           ...Array.from({ length: 25 }, (_, index) =>
-            hit(String(index + 22), 0.74 - index * 0.01),
+            hit(
+              String(index + 22),
+              0.74 - index * 0.01,
+            ),
           ),
         ]);
       }
@@ -231,7 +237,7 @@ describe("POST /api/queries/[id]/matches", () => {
           {
             id: QUERY_ID,
             title: "Golden Clock",
-            image_key: IMAGE_KEY,
+            image_key: "V1StGXR8_Z5jdHi6B-myT",
             status: "processing",
             createdAt: new Date("2026-06-11T10:00:00Z"),
           },
@@ -286,11 +292,13 @@ describe("POST /api/queries/[id]/matches", () => {
     expect(body[0].auctionet_id).toBe("2000");
     expect(body[0].similarity_score).toBe(0.95);
     expect(
-      body.some((row: { auctionet_id: string }) => row.auctionet_id === "46"),
+      body.some(
+        (row: { auctionet_id: string }) => row.auctionet_id === "46",
+      ),
     ).toBe(false);
   });
 
-  it("ranks a recent mid score above an old high score", async () => {
+  it("ranks by similarity regardless of old or missing sale dates", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-24T12:00:00Z"));
 
@@ -299,6 +307,7 @@ describe("POST /api/queries/[id]/matches", () => {
         return Promise.resolve([
           hit("3000", 0.92, FIVE_YEARS_AGO_UNIX),
           hit("3001", 0.85, MONTH_AGO_UNIX),
+          hit("3002", 0.99, null),
         ]);
       }
 
@@ -314,31 +323,38 @@ describe("POST /api/queries/[id]/matches", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toHaveLength(2);
-    expect(body[0].auctionet_id).toBe("3001");
-    expect(body[0].similarity_score).toBe(0.85);
+    expect(body).toHaveLength(3);
+    expect(body[0].auctionet_id).toBe("3002");
+    expect(body[0].similarity_score).toBe(0.99);
     expect(body[1].auctionet_id).toBe("3000");
     expect(body[1].similarity_score).toBe(0.92);
+    expect(body[2].auctionet_id).toBe("3001");
+    expect(body[2].similarity_score).toBe(0.85);
   });
 
-  it("does not regenerate matches for a ready query", async () => {
-    vi.doMock("@/db", () => {
-      const mockDb = createDbMock({
-        updateReturning: [],
-        selectResults: [[{ id: QUERY_ID, status: "ready" }]],
+  it.each(["ready", "processing"])(
+    "does not regenerate matches for a %s query",
+    async (status) => {
+      vi.doMock("@/db", () => {
+        const mockDb = createDbMock({
+          updateReturning: [],
+          selectResults: [[{ id: QUERY_ID, status }]],
+        });
+        return { db: mockDb.db };
       });
-      return { db: mockDb.db };
-    });
 
-    const { POST } = await import("@/app/api/queries/[id]/matches/route");
-    const response = await POST(makeRequest("POST"), { params });
+      const { POST } = await import("@/app/api/queries/[id]/matches/route");
+      const response = await POST(makeRequest("POST"), { params });
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ status: "ready" });
-    expect(mockSearch).not.toHaveBeenCalled();
-  });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ status });
+      expect(mockEmbedImageUrl).not.toHaveBeenCalled();
+      expect(mockSearch).not.toHaveBeenCalled();
+    },
+  );
 
-  it("does not expose upstream error details", async () => {
+  it("marks failed generation as retryable without exposing upstream errors", async () => {
+    const { db } = await import("@/db");
     mockEmbedImageUrl.mockRejectedValueOnce(
       new Error("secret upstream detail"),
     );
@@ -347,11 +363,13 @@ describe("POST /api/queries/[id]/matches", () => {
     const response = await POST(makeRequest("POST"), { params });
 
     expect(response.status).toBe(500);
+    const statusUpdate = vi.mocked(db.update).mock.results.at(-1)?.value;
+    expect(statusUpdate.set).toHaveBeenCalledWith({ status: "failed" });
+    expect(mockSearch).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toEqual({
       error: "Internal server error",
     });
   });
-
   it("drops Qdrant payloads that are not Auctionet catalog images", async () => {
     mockSearch.mockImplementation((collection: string) => {
       if (collection === "references-28-paintings") {
