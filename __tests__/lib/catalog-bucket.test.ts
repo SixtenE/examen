@@ -7,6 +7,7 @@ import {
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { listCatalogKeyPages, readCatalogJson } from "@/lib/catalog-bucket";
+import { CatalogItemError } from "@/lib/catalog-item-error";
 import {
   clearCatalogFailure,
   listFailedCatalogItems,
@@ -65,7 +66,7 @@ it("propagates invalid JSON or failed bucket reads instead of returning an empty
   });
   await expect(
     readCatalogJson("scrape/28-paintings/100/10001.json"),
-  ).rejects.toThrow();
+  ).rejects.toBeInstanceOf(CatalogItemError);
   send.mockRejectedValueOnce(new Error("Access denied"));
   await expect(
     readCatalogJson("scrape/28-paintings/100/10001.json"),

@@ -18,7 +18,9 @@ import {
   clearCatalogFailure,
   listFailedCatalogItems,
   recordCatalogFailure,
+  isPermanentCatalogFailure,
 } from "../lib/catalog-failures";
+import { CatalogItemError } from "../lib/catalog-item-error";
 import {
   catalogObjectExists,
   listCatalogKeyPages,
@@ -342,10 +344,21 @@ export async function indexCategory(
         log(`${label} — reading item JSON`);
         let vectorsSaved = false;
         try {
+          if (
+            !options.retryFailed &&
+            failedItems.has(itemKey) &&
+            (await isPermanentCatalogFailure(itemKey))
+          ) {
+            summary.skipped += 1;
+            log(`${label} — skipped (permanent failure; use --retry-failed)`);
+            continue;
+          }
           const raw = await readCatalogJson(itemKey);
           const item = validateEmbeddingItem(raw, itemKey);
           if (String(item.auctionet_id) !== path.basename(relative, ".json")) {
-            throw new Error(`Item ID does not match bucket key: ${itemKey}`);
+            throw new CatalogItemError(
+              `Item ID does not match bucket key: ${itemKey}`,
+            );
           }
           if (item.status !== "sold") {
             summary.unsold += 1;
@@ -362,7 +375,9 @@ export async function indexCategory(
             item.image_urls.length === 0 ||
             item.image_urls.length > MAX_REFERENCES_PER_ITEM
           ) {
-            throw new Error(`Invalid item ID or image count in ${itemKey}`);
+            throw new CatalogItemError(
+              `Invalid item ID or image count in ${itemKey}`,
+            );
           }
           const metadata = validateAuctionetItem(raw, itemKey);
           if (client)
@@ -471,6 +486,7 @@ export async function indexCategory(
           if (embedding && !vectorsSaved && !options.dryRun) {
             await recordCatalogFailure(itemKey, error);
           }
+          if (error instanceof CatalogItemError) continue;
           // Stop on service failures rather than spending on more embeddings during an outage.
           throw error;
         } finally {

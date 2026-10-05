@@ -11,6 +11,7 @@ import {
   putCatalogObject,
 } from "@/lib/catalog-bucket";
 import { qdrantClient } from "@/lib/qdrant";
+import { CatalogItemError } from "@/lib/catalog-item-error";
 
 vi.mock("@/lib/catalog-bucket", () => ({
   catalogObjectExists: vi.fn(),
@@ -359,11 +360,12 @@ it("upsert-only reads bucket artifacts and preserves force and max-items", async
   expect(embedding.embedAuctionetItem).not.toHaveBeenCalled();
 });
 
-it("rejects mismatched bucket artifacts instead of paying to replace them", async () => {
+it("quarantines mismatched bucket artifacts instead of paying to replace them", async () => {
   objects.set(vectorKey, artifact(999));
   await expect(
     indexCategory(category, options(), { remaining: 1 }),
-  ).rejects.toThrow("auctionet_id mismatch");
+  ).resolves.toMatchObject({ failed: 1, embedded: 0, indexed: 0 });
+  expect(objects.get(failureKey)).toMatchObject({ permanent: true });
   expect(embedding.embedAuctionetItem).not.toHaveBeenCalled();
   expect(qdrantClient.upsert).not.toHaveBeenCalled();
 });
@@ -474,10 +476,65 @@ it("dry-run retries leave failure records untouched on both successful plans and
   objects.set(itemKey, {});
   await expect(
     indexCategory(category, retryOptions, { remaining: 1 }),
-  ).rejects.toThrow("auctionet_id");
+  ).resolves.toMatchObject({ failed: 1 });
   expect(objects.get(failureKey)).toEqual({ error: "Old error" });
   expect(putCatalogObject).not.toHaveBeenCalled();
   expect(deleteCatalogObject).not.toHaveBeenCalled();
+});
+
+it.each([1, 2])(
+  "continues past permanent image failures across runs with an embedding budget of %i",
+  async (limit) => {
+    objects.set("scrape/28-paintings/100/10002.json", {
+      ...item,
+      auctionet_id: 10002,
+    });
+    vi.mocked(embedding.embedAuctionetItem).mockImplementation(
+      async (value) => {
+        if (value.auctionet_id === item.auctionet_id)
+          throw new CatalogItemError("Broken image");
+        return artifact(value.auctionet_id);
+      },
+    );
+    expect(
+      await indexCategory(category, options(), { remaining: limit }),
+    ).toMatchObject({ failed: 1, indexed: limit - 1 });
+    expect(objects.get(failureKey)).toMatchObject({ permanent: true });
+    expect(
+      await indexCategory(category, options(), { remaining: 1 }),
+    ).toMatchObject({ failed: 0, skipped: 1, indexed: 1 });
+    expect(
+      vi
+        .mocked(embedding.embedAuctionetItem)
+        .mock.calls.filter(
+          ([value]) => value.auctionet_id === item.auctionet_id,
+        ),
+    ).toHaveLength(1);
+
+    vi.mocked(embedding.embedAuctionetItem).mockImplementation(async (value) =>
+      artifact(value.auctionet_id),
+    );
+    expect(
+      await indexCategory(
+        category,
+        { ...options(), retryFailed: true },
+        { remaining: 1 },
+      ),
+    ).toMatchObject({ checked: 1, indexed: 1, failed: 0 });
+    expect(objects.has(failureKey)).toBe(false);
+  },
+);
+
+it("continues to a valid item after quarantining malformed catalog data", async () => {
+  objects.set(itemKey, {});
+  objects.set("scrape/28-paintings/100/10002.json", {
+    ...item,
+    auctionet_id: 10002,
+  });
+  expect(
+    await indexCategory(category, options(), { remaining: 1 }),
+  ).toMatchObject({ checked: 2, failed: 1, indexed: 1 });
+  expect(objects.get(failureKey)).toMatchObject({ permanent: true });
 });
 
 it("preserves the failure and saved vectors if clearing the bucket record fails", async () => {

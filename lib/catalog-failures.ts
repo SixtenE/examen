@@ -2,8 +2,10 @@ import {
   deleteCatalogObject,
   listCatalogKeyPages,
   putCatalogObject,
+  readCatalogJson,
 } from "./catalog-bucket";
 import { categoryBucketPrefix } from "./catalog-paths";
+import { CatalogItemError } from "./catalog-item-error";
 
 export function categoryFailuresBucketPrefix(segment: string) {
   return `${categoryBucketPrefix(segment)}/failures`;
@@ -37,7 +39,7 @@ export async function recordCatalogFailure(itemKey: string, error: unknown) {
   try {
     await putCatalogObject(
       failureBucketKey(itemKey),
-      `${JSON.stringify({ item_key: itemKey, failed_at: new Date().toISOString(), error: message })}\n`,
+      `${JSON.stringify({ item_key: itemKey, failed_at: new Date().toISOString(), error: message, ...(error instanceof CatalogItemError ? { permanent: true } : {}) })}\n`,
       { skipExisting: false },
     );
   } catch (bucketError) {
@@ -46,6 +48,16 @@ export async function recordCatalogFailure(itemKey: string, error: unknown) {
       { cause: bucketError },
     );
   }
+}
+
+export async function isPermanentCatalogFailure(itemKey: string) {
+  const failure = await readCatalogJson(failureBucketKey(itemKey));
+  return (
+    typeof failure === "object" &&
+    failure !== null &&
+    "permanent" in failure &&
+    failure.permanent === true
+  );
 }
 
 export async function clearCatalogFailure(itemKey: string) {

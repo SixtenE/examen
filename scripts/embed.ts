@@ -24,6 +24,7 @@ import {
 import { formatDuration } from "../lib/format-duration";
 import { setTimeout as sleep } from "node:timers/promises";
 import sharp from "sharp";
+import { CatalogItemError } from "../lib/catalog-item-error";
 
 type CliOptions = {
   itemsDir: string;
@@ -256,18 +257,20 @@ export function validateAuctionetItem(
   filePath: string,
 ): AuctionetItemJson {
   if (!isRecord(value)) {
-    throw new Error(`${filePath} must contain a JSON object`);
+    throw new CatalogItemError(`${filePath} must contain a JSON object`);
   }
 
   if (typeof value.auctionet_id !== "number") {
-    throw new Error(`${filePath} is missing numeric auctionet_id`);
+    throw new CatalogItemError(`${filePath} is missing numeric auctionet_id`);
   }
 
   if (
     !Array.isArray(value.image_urls) ||
     !value.image_urls.every((url) => typeof url === "string")
   ) {
-    throw new Error(`${filePath} is missing image_urls string array`);
+    throw new CatalogItemError(
+      `${filePath} is missing image_urls string array`,
+    );
   }
 
   return {
@@ -422,19 +425,32 @@ async function prepareInlineImages(imageUrls: string[]) {
           signal: AbortSignal.timeout(30_000),
         });
         if (!response.ok) {
-          throw new Error(`Image download failed (${response.status})`);
+          const Failure =
+            response.status === 404 || response.status === 410
+              ? CatalogItemError
+              : Error;
+          throw new Failure(`Image download failed (${response.status})`);
         }
         const bytes = Buffer.from(await response.arrayBuffer());
-        const image = sharp(bytes);
-        const { format } = await image.metadata();
-        // Decode fully; keep JPEG/PNG bytes to avoid inflating large photos.
-        await image.stats();
-        const supported = format === "jpeg" || format === "png";
-        const data = supported ? bytes : await image.png().toBuffer();
-        const mime = supported ? format : "png";
-        return `data:image/${mime};base64,${data.toString("base64")}`;
+        try {
+          const image = sharp(bytes);
+          const { format } = await image.metadata();
+          // Decode fully; keep JPEG/PNG bytes to avoid inflating large photos.
+          await image.stats();
+          const supported = format === "jpeg" || format === "png";
+          const data = supported ? bytes : await image.png().toBuffer();
+          const mime = supported ? format : "png";
+          return `data:image/${mime};base64,${data.toString("base64")}`;
+        } catch (error) {
+          throw new CatalogItemError(
+            error instanceof Error ? error.message : String(error),
+            { cause: error },
+          );
+        }
       } catch (error) {
-        throw new Error(
+        const Failure =
+          error instanceof CatalogItemError ? CatalogItemError : Error;
+        throw new Failure(
           `Cannot prepare embedding image ${url}: ${error instanceof Error ? error.message : String(error)}`,
           { cause: error },
         );
@@ -460,7 +476,7 @@ async function embedImageUrlBatch(
   const requestBytes = Buffer.byteLength(requestBody);
   const splitBatch = async () => {
     if (imageUrls.length === 1) {
-      throw new Error(
+      throw new CatalogItemError(
         `Embedding image exceeds the OpenRouter request size limit (${requestBytes} bytes): ${imageUrls[0]}`,
       );
     }
@@ -533,7 +549,12 @@ async function embedImageUrlBatch(
     }
 
     if (!isRetryableStatus(response.status) || attempt === options.maxRetries) {
-      throw new Error(
+      const Failure =
+        response.status === 400 &&
+        errorMessage.includes("Provided image is not valid")
+          ? CatalogItemError
+          : Error;
+      throw new Failure(
         `OpenRouter embedding request failed (${response.status}): ${errorMessage}; images: ${imageUrls.join(", ")}`,
       );
     }

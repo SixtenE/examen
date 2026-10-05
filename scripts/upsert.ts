@@ -3,6 +3,7 @@ import "dotenv/config";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { CatalogItemError } from "../lib/catalog-item-error";
 import { referenceCollection } from "../lib/catalog-paths";
 import { EMBEDDING_DIMENSIONS } from "../lib/embeddings";
 
@@ -234,7 +235,9 @@ function validateReference(
   index: number,
 ): ReferenceVector {
   if (!isRecord(value)) {
-    throw new Error(`${filePath} reference ${index} must be an object`);
+    throw new CatalogItemError(
+      `${filePath} reference ${index} must be an object`,
+    );
   }
 
   const imageIndex = value.image_index;
@@ -243,32 +246,34 @@ function validateReference(
     typeof imageIndex !== "number" ||
     imageIndex < 0
   ) {
-    throw new Error(
+    throw new CatalogItemError(
       `${filePath} reference ${index} is missing non-negative integer image_index`,
     );
   }
 
   if (imageIndex >= MAX_REFERENCES_PER_ITEM) {
-    throw new Error(
+    throw new CatalogItemError(
       `${filePath} reference ${index} image_index ${imageIndex} exceeds deterministic ID limit ${MAX_REFERENCES_PER_ITEM - 1}`,
     );
   }
 
   if (typeof value.image_url !== "string" || value.image_url.length === 0) {
-    throw new Error(`${filePath} reference ${index} is missing image_url`);
+    throw new CatalogItemError(
+      `${filePath} reference ${index} is missing image_url`,
+    );
   }
 
   if (
     !Array.isArray(value.embedding) ||
     !value.embedding.every((entry) => typeof entry === "number")
   ) {
-    throw new Error(
+    throw new CatalogItemError(
       `${filePath} reference ${index} is missing numeric embedding array`,
     );
   }
 
   if (value.embedding.length !== EMBEDDING_DIMENSIONS) {
-    throw new Error(
+    throw new CatalogItemError(
       `${filePath} reference ${index} has ${value.embedding.length} dimensions, expected ${EMBEDDING_DIMENSIONS}`,
     );
   }
@@ -285,27 +290,27 @@ export function validateVectorArtifact(
   filePath: string,
 ): VectorArtifact {
   if (!isRecord(value)) {
-    throw new Error(`${filePath} must contain a JSON object`);
+    throw new CatalogItemError(`${filePath} must contain a JSON object`);
   }
 
   if (typeof value.auctionet_id !== "number") {
-    throw new Error(`${filePath} is missing numeric auctionet_id`);
+    throw new CatalogItemError(`${filePath} is missing numeric auctionet_id`);
   }
 
   if (value.model !== EMBEDDING_MODEL) {
-    throw new Error(
+    throw new CatalogItemError(
       `${filePath} model is ${String(value.model)}, expected ${EMBEDDING_MODEL}`,
     );
   }
 
   if (value.dimensions !== EMBEDDING_DIMENSIONS) {
-    throw new Error(
+    throw new CatalogItemError(
       `${filePath} dimensions is ${String(value.dimensions)}, expected ${EMBEDDING_DIMENSIONS}`,
     );
   }
 
   if (!Array.isArray(value.references)) {
-    throw new Error(`${filePath} is missing references array`);
+    throw new CatalogItemError(`${filePath} is missing references array`);
   }
 
   return {
@@ -327,7 +332,7 @@ function parsePrice(value: unknown, filePath: string) {
   }
 
   if (typeof value !== "string") {
-    throw new Error(`${filePath} price must be a string or null`);
+    throw new CatalogItemError(`${filePath} price must be a string or null`);
   }
 
   const match = /^([\d\s,.]+)\s+([A-Z]{3})$/.exec(value);
@@ -358,11 +363,11 @@ export function validateAuctionetItem(
   filePath: string,
 ): AuctionetItemJson {
   if (!isRecord(value)) {
-    throw new Error(`${filePath} must contain a JSON object`);
+    throw new CatalogItemError(`${filePath} must contain a JSON object`);
   }
 
   if (typeof value.auctionet_id !== "number") {
-    throw new Error(`${filePath} is missing numeric auctionet_id`);
+    throw new CatalogItemError(`${filePath} is missing numeric auctionet_id`);
   }
 
   const currency =
@@ -468,7 +473,7 @@ export function buildPoints(
   item: AuctionetItemJson,
 ): ReferencePoint[] {
   if (artifact.auctionet_id !== item.auctionet_id) {
-    throw new Error(
+    throw new CatalogItemError(
       `auctionet_id mismatch: artifact ${artifact.auctionet_id}, item ${item.auctionet_id}`,
     );
   }

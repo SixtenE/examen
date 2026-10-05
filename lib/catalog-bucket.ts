@@ -9,6 +9,7 @@ import {
 import { constants } from "node:fs";
 import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { CatalogItemError } from "./catalog-item-error";
 import {
   bucketKeyToLocalPath,
   localPathToBucketKey,
@@ -143,7 +144,14 @@ async function readCatalogObject(key: string) {
 }
 
 export async function readCatalogJson(key: string): Promise<unknown> {
-  return JSON.parse((await readCatalogObject(key)).toString("utf8"));
+  const bytes = await readCatalogObject(key);
+  try {
+    return JSON.parse(bytes.toString("utf8"));
+  } catch (error) {
+    throw new CatalogItemError(`Invalid catalog JSON: ${key}`, {
+      cause: error,
+    });
+  }
 }
 
 export async function downloadCatalogObject(key: string, localPath: string) {
