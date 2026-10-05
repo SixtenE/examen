@@ -27,6 +27,7 @@ const contentSecurityPolicy = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["heic-convert"],
   poweredByHeader: false,
   async rewrites() {
     return [

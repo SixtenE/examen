@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
-import convert from "heic-convert";
+import { convertHeicToJpeg } from "@/lib/heic";
 import { nanoid } from "nanoid";
 import { db } from "@/db";
 import { queries } from "@/db/schema";
@@ -18,7 +18,6 @@ import {
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15MB
 const MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024;
 const MAX_INPUT_PIXELS = 64_000_000;
-const HEIC_DECODE_TIMEOUT_MS = 8_000;
 const STORED_MAX_EDGE = 1500;
 const STORED_JPEG_QUALITY = 80;
 const ALLOWED_IMAGE_TYPES = new Set([
@@ -152,22 +151,6 @@ function isHeic(file: File) {
   );
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("Timed out")), ms);
-      }),
-    ]);
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
-}
-
 export async function POST(request: NextRequest) {
   const startedAt = performance.now();
   const uploadSourceHeader = request.headers?.get("x-upload-source");
@@ -288,17 +271,8 @@ export async function POST(request: NextRequest) {
     // HEIC/HEIF to JPEG first using heic-convert (libheif compiled to wasm).
     if (heic) {
       try {
-        // heic-convert spreads the input internally, so it needs an iterable
-        // Buffer/Uint8Array (its bundled @types incorrectly demand ArrayBuffer).
         const jpeg = await withSpan("image.decode_heic", {}, () =>
-          withTimeout(
-            convert({
-              buffer: body as unknown as ArrayBuffer,
-              format: "JPEG",
-              quality: 0.9,
-            }),
-            HEIC_DECODE_TIMEOUT_MS,
-          ),
+          convertHeicToJpeg(body),
         );
         body = Buffer.from(jpeg);
       } catch {

@@ -41,7 +41,7 @@ const mockSharp = vi.hoisted(() => {
 const mockHeicConvert = vi.hoisted(() => vi.fn());
 
 vi.mock("sharp", () => ({ default: mockSharp }));
-vi.mock("heic-convert", () => ({ default: mockHeicConvert }));
+vi.mock("@/lib/heic", () => ({ convertHeicToJpeg: mockHeicConvert }));
 
 vi.mock("@/lib/s3", () => ({
   s3Client: { send: (...args: unknown[]) => mockS3Send(...args) },

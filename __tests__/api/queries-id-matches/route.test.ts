@@ -187,10 +187,7 @@ describe("POST /api/queries/[id]/matches", () => {
           hit("2000", 0.95, MONTH_AGO_UNIX),
           hit("2000", 0.8, MONTH_AGO_UNIX),
           ...Array.from({ length: 20 }, (_, index) =>
-            hit(
-              String(index + 2),
-              0.94 - index * 0.01,
-            ),
+            hit(String(index + 2), 0.94 - index * 0.01),
           ),
         ]);
       }
@@ -199,10 +196,7 @@ describe("POST /api/queries/[id]/matches", () => {
         return Promise.resolve([
           hit("2000", 0.85, MONTH_AGO_UNIX),
           ...Array.from({ length: 25 }, (_, index) =>
-            hit(
-              String(index + 22),
-              0.74 - index * 0.01,
-            ),
+            hit(String(index + 22), 0.74 - index * 0.01),
           ),
         ]);
       }
@@ -292,9 +286,7 @@ describe("POST /api/queries/[id]/matches", () => {
     expect(body[0].auctionet_id).toBe("2000");
     expect(body[0].similarity_score).toBe(0.95);
     expect(
-      body.some(
-        (row: { auctionet_id: string }) => row.auctionet_id === "46",
-      ),
+      body.some((row: { auctionet_id: string }) => row.auctionet_id === "46"),
     ).toBe(false);
   });
 
