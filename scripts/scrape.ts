@@ -670,19 +670,6 @@ function getAuctionetIdFromUrl(url: URL) {
   return Number(match[1]);
 }
 
-function isAllowedListingPage(nextUrl: URL, startUrl: URL) {
-  return (
-    nextUrl.origin === startUrl.origin &&
-    nextUrl.pathname === startUrl.pathname &&
-    [...startUrl.searchParams].every(
-      ([key, value]) =>
-        key === "page" ||
-        key === "order" ||
-        nextUrl.searchParams.get(key) === value,
-    )
-  );
-}
-
 function createPageProgress(pageNumber: number, totalItems: number) {
   const pageStartedAt = performance.now();
   const recentDurations: number[] = [];
@@ -718,10 +705,6 @@ async function scrapeItem(
   options: CliOptions,
   stats: CrawlStats,
 ): Promise<"saved" | "skipped" | "failed"> {
-  if (options.maxItems && stats.saved_item_count >= options.maxItems) {
-    return "skipped";
-  }
-
   const key = itemBucketKey(options.segment, auctionetId);
 
   if (!options.force && (await catalogObjectExists(key))) {
@@ -764,14 +747,25 @@ async function scrapePageItems(
 
   const progress = createPageProgress(pageNumber, entries.length);
   let nextIndex = 0;
+  let inFlight = 0;
   const results: Array<"saved" | "skipped" | "failed"> = [];
 
   async function worker() {
     while (nextIndex < entries.length) {
+      if (
+        options.maxItems !== null &&
+        stats.saved_item_count + inFlight >= options.maxItems
+      ) {
+        return;
+      }
+
       const entry = entries[nextIndex];
       nextIndex += 1;
+      // Reserve a possible save before yielding; skips and failures free the slot.
+      inFlight += 1;
       const startedAt = performance.now();
       const result = await scrapeItem(entry[0], entry[1], options, stats);
+      inFlight -= 1;
       results.push(result);
       progress.record(performance.now() - startedAt);
       console.log(progress.report());
@@ -801,8 +795,9 @@ async function crawlListingOrder(
   const visitedListingUrls = new Set<string>();
   let listingUrl: URL | null = withListingOrder(startUrl, order);
   let pageNumber = 0;
-  let pagesVisited = 0;
   let expectedCount: number | null = null;
+  let stopReason = "no valid next link";
+  const discoveredBefore = seenAuctionetIds.size;
 
   console.log(`Order ${order}: starting at ${listingUrl.toString()}`);
 
@@ -810,15 +805,16 @@ async function crawlListingOrder(
     const listingUrlKey = listingUrl.toString();
 
     if (visitedListingUrls.has(listingUrlKey)) {
+      stopReason = "repeated listing URL";
       break;
     }
 
-    if (options.maxPages && pagesVisited >= options.maxPages) {
+    if (options.maxPages && pageNumber >= options.maxPages) {
+      stopReason = `page budget (--max-pages ${options.maxPages})`;
       break;
     }
 
     visitedListingUrls.add(listingUrlKey);
-    pagesVisited += 1;
     pageNumber += 1;
     console.log(
       `Fetching listing page ${pageNumber} (${order}): ${listingUrlKey}`,
@@ -850,8 +846,6 @@ async function crawlListingOrder(
     }
 
     const nextUrl = extractNextListingPageUrl(html, listingUrl);
-    const allowedNextUrl =
-      nextUrl && isAllowedListingPage(nextUrl, startUrl) ? nextUrl : null;
 
     const pageStats = await scrapePageItems(
       pageEntries,
@@ -867,19 +861,21 @@ async function crawlListingOrder(
       pageStats.failed === 0 &&
       pageStats.skipped === pageEntries.length
     ) {
-      console.log(
-        `Order ${order}: page ${pageNumber} all already in bucket — incremental stop`,
-      );
+      stopReason = "all page items already in bucket (incremental stop)";
       break;
     }
 
     if (options.maxItems && stats.saved_item_count >= options.maxItems) {
-      console.log(`Reached --max-items ${options.maxItems} newly saved items`);
+      stopReason = `item budget (--max-items ${options.maxItems})`;
       break;
     }
 
-    listingUrl = allowedNextUrl;
+    listingUrl = nextUrl;
   }
+
+  console.log(
+    `Order ${order}: stopped (${stopReason}); ${pageNumber} pages, ${seenAuctionetIds.size - discoveredBefore} new unique items; ${seenAuctionetIds.size}/${expectedCount ?? "unknown"} unique items discovered across orders`,
+  );
   return expectedCount;
 }
 
@@ -900,6 +896,17 @@ export async function crawlAuctionet(options: CliOptions, stats: CrawlStats) {
       seenAuctionetIds,
     );
     if (count !== null) expectedCount = Math.max(expectedCount ?? 0, count);
+
+    if (options.maxItems && stats.saved_item_count >= options.maxItems) {
+      break;
+    }
+
+    if (expectedCount !== null && seenAuctionetIds.size === expectedCount) {
+      console.log(
+        `Advertised coverage reached (${seenAuctionetIds.size}/${expectedCount}); skipping remaining sort orders`,
+      );
+      break;
+    }
   }
 
   const budgetReached =
