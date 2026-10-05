@@ -4,7 +4,7 @@ The searchable Catalog is rebuilt incrementally by Railway cron services. Scrape
 
 ## Considered Options
 
-- **Railway cron + bucket-backed intermediates** (chosen) — matches the existing scrape → embed → seed scripts, survives ephemeral disks, and stays idle between runs.
+- **Railway cron + bucket-backed intermediates** (chosen) — matches the existing scrape → embed → upsert scripts, survives ephemeral disks, and stays idle between runs.
 - **Always-on worker with a local volume** — simpler resume on disk, but pays for idle compute and couples durability to one volume.
 - **Re-scrape and re-embed everything daily** — no bucket skip checks, but wastes Auctionet fetches and OpenRouter spend.
 
