@@ -31,9 +31,7 @@ export default function Error({
       <Empty>
         <EmptyHeader>
           <EmptyTitle>Something went wrong</EmptyTitle>
-          <EmptyDescription>
-            {error.message || "An unexpected error occurred."}
-          </EmptyDescription>
+          <EmptyDescription>An unexpected error occurred.</EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <Button onClick={reset}>

@@ -21,8 +21,8 @@ vi.mock("sharp", () => {
   return { default: vi.fn(() => chain) };
 });
 
-vi.mock("heic-convert", () => ({
-  default: vi.fn(),
+vi.mock("@/lib/heic", () => ({
+  convertHeicToJpeg: vi.fn(),
 }));
 
 vi.mock("@/lib/s3", () => ({

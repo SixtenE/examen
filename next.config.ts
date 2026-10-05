@@ -27,6 +27,8 @@ const contentSecurityPolicy = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["heic-convert"],
+  poweredByHeader: false,
   async rewrites() {
     return [
       {
@@ -75,6 +77,7 @@ const nextConfig: NextConfig = {
           },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "X-Frame-Options", value: "DENY" },
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
         ],
       },
     ];

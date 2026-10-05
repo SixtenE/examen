@@ -208,6 +208,7 @@ export default function Page() {
               height={1500}
               sizes="(max-width: 640px) 100vw, 33vw"
               priority
+              unoptimized
               className="ph-no-capture bg-muted aspect-square h-auto w-full rounded-lg object-cover"
             />
           ) : (

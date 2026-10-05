@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
-import convert from "heic-convert";
+import { convertHeicToJpeg } from "@/lib/heic";
 import { nanoid } from "nanoid";
 import { db } from "@/db";
 import { queries } from "@/db/schema";
@@ -9,6 +9,7 @@ import { s3Client } from "@/lib/s3";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { trackServerError, trackServerEvent, withSpan } from "@/lib/telemetry";
 import { SeverityNumber } from "@opentelemetry/api-logs";
+import { isQueryImageKey } from "@/lib/utils";
 import {
   getOrCreateQueryOwnerId,
   setQueryOwnerCookie,
@@ -160,6 +161,7 @@ export async function POST(request: NextRequest) {
   const rateLimitResponse = await enforceRateLimit(request, {
     scope: "api:upload:post",
     failClosed: true,
+    limit: 10,
   });
   if (rateLimitResponse) {
     return rateLimitResponse;
@@ -269,14 +271,8 @@ export async function POST(request: NextRequest) {
     // HEIC/HEIF to JPEG first using heic-convert (libheif compiled to wasm).
     if (heic) {
       try {
-        // heic-convert spreads the input internally, so it needs an iterable
-        // Buffer/Uint8Array (its bundled @types incorrectly demand ArrayBuffer).
         const jpeg = await withSpan("image.decode_heic", {}, () =>
-          convert({
-            buffer: body as unknown as ArrayBuffer,
-            format: "JPEG",
-            quality: 0.9,
-          }),
+          convertHeicToJpeg(body),
         );
         body = Buffer.from(jpeg);
       } catch {
@@ -319,11 +315,17 @@ export async function POST(request: NextRequest) {
 
     const ownerId = getOrCreateQueryOwnerId(request);
     const key = nanoid();
+    if (!isQueryImageKey(key)) {
+      return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+    }
+
     const command = new PutObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: key,
       Body: body,
       ContentType: "image/jpeg",
+      CacheControl: "private, max-age=3600",
+      ContentDisposition: "inline",
     });
 
     await withSpan("storage.upload_image", { stored_bytes: body.length }, () =>
