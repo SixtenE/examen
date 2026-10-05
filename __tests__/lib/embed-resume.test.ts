@@ -53,6 +53,7 @@ afterEach(async () => {
 it.each([true, false])(
   "fresh disk: fully indexed=%s avoids only redundant embedding",
   async (indexed) => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test");
     const root = await mkdtemp(path.join(tmpdir(), "embed-resume-"));
     directories.push(root);
     const itemsDir = path.join(root, "28-paintings");
