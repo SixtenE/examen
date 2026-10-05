@@ -2,6 +2,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import sharp from "sharp";
 import { embedAuctionetItem } from "../../scripts/embed";
+import { CatalogItemError } from "@/lib/catalog-item-error";
 
 const urls = [
   "https://images.auctionet.com/1.jpg",
@@ -128,11 +129,35 @@ it("names a broken image and does not submit an incomplete batch", async () => {
   vi.stubGlobal("fetch", fetchMock);
   await expect(
     embedAuctionetItem({ ...item, image_urls: [urls[0]] }, options),
-  ).rejects.toThrow(urls[0]);
+  ).rejects.toBeInstanceOf(CatalogItemError);
   expect(
     fetchMock.mock.calls.filter(([url]) => !urls.includes(url)),
   ).toHaveLength(1);
 });
+
+it.each([404, 410, 429, 503])(
+  "only marks missing CDN images as permanent (%i)",
+  async (status) => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url === urls[0]
+          ? new Response("unavailable", { status })
+          : invalidImage(),
+      ),
+    );
+    const error = await embedAuctionetItem(
+      { ...item, image_urls: [urls[0]] },
+      options,
+    ).catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error instanceof CatalogItemError).toBe(
+      status === 404 || status === 410,
+    );
+  },
+);
 
 it.each(["invalid twice", "unrelated 400"])(
   "does not loop on %s",

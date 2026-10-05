@@ -1,10 +1,32 @@
 import "dotenv/config";
 
 import { spawn } from "node:child_process";
-import { constants } from "node:fs";
-import { access, mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { embedAuctionetVectors, parseArgs as parseEmbedArgs } from "./embed";
+import {
+  embedAuctionetItem,
+  validateAuctionetItem as validateEmbeddingItem,
+} from "./embed";
+import {
+  artifactAlreadySeeded,
+  buildPoints,
+  upsertArtifact,
+  validateAuctionetItem,
+  validateVectorArtifact,
+} from "./upsert";
+import { formatDuration } from "../lib/format-duration";
+import {
+  clearCatalogFailure,
+  listFailedCatalogItems,
+  recordCatalogFailure,
+  isPermanentCatalogFailure,
+} from "../lib/catalog-failures";
+import { CatalogItemError } from "../lib/catalog-item-error";
+import {
+  catalogObjectExists,
+  listCatalogKeyPages,
+  readCatalogJson,
+  putCatalogObject,
+} from "../lib/catalog-bucket";
 import { pathToFileURL } from "node:url";
 import {
   discoverCompanyLeafCategories,
@@ -14,11 +36,12 @@ import {
 import {
   AUCTIONET_LEAF_CATEGORIES,
   categoryBucketPrefix,
-  categoryItemsDir,
   categoryVectorsBucketPrefix,
   categoryVectorsDir,
   CRAFOORD_STOCKHOLM_COMPANY_ID,
-  localPathToBucketKey,
+  expectedPointIds,
+  referenceCollection,
+  MAX_REFERENCES_PER_ITEM,
   parseCatalogCategories,
   parsePipelineStages,
   type CatalogCategory,
@@ -31,6 +54,7 @@ type CliOptions = {
   categories: CatalogCategory[];
   dryRun: boolean;
   force: boolean;
+  retryFailed: boolean;
   stages: Set<PipelineStage>;
   maxPages: number | null;
   maxItems: number | null;
@@ -40,18 +64,12 @@ type CliOptions = {
   companyId: number;
 };
 
-type ItemSummary = {
-  auctionet_id: number;
-  status: string | null;
-  image_urls: string[];
-};
-
 function usage() {
   return [
     "Usage: pnpm cron -- [options]",
     "",
     "Daily catalog pipeline: scrape → embed → store → upsert.",
-    "Duplicate checks: bucket HeadObject (scrape), local/vector files, Qdrant point IDs.",
+    "Bucket-backed indexing: item JSON → embed → store → upsert (no local files).",
     "",
     "Options:",
     "  --category <segment|url>   Category segment, or segment|url (repeatable)",
@@ -59,11 +77,12 @@ function usage() {
     "  --stages <list>            Comma list: scrape,embed,store,upsert (default: all)",
     "  --discover-leaves          Refresh leaf categories from Auctionet facets",
     `  --company-id <n>           Company for --discover-leaves (default: ${CRAFOORD_STOCKHOLM_COMPANY_ID})`,
-    "  --dry-run                  Print planned work without side effects",
+    "  --dry-run                  Read bucket/Qdrant and print planned work without writes",
     "  --force                    Forwarded to upsert (rewrite existing Qdrant payloads)",
+    "  --retry-failed             Only retry items recorded as failed in the bucket (no scrape)",
     "  --max-embed-items <n>      Max new embedding items across all categories",
     "  --max-pages <n>            Forwarded to scrape",
-    "  --max-items <n>            Max newly scraped items across categories (skips excluded)",
+    "  --max-items <n>            Max newly scraped items; upsert-only artifact cap per category",
   ].join("\n");
 }
 
@@ -87,13 +106,14 @@ function parsePositiveInteger(value: string, name: string) {
   return parsed;
 }
 
-function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
+export function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
   categoryArgs: string[];
 } {
   const categoryArgs: string[] = [];
   let dryRun = false;
   let force = false;
-  let stages = parsePipelineStages(undefined);
+  let retryFailed = false;
+  let stages: Set<PipelineStage> | undefined;
   let maxPages: number | null = null;
   let maxItems: number | null = null;
   let maxEmbedItems: number | null = null;
@@ -140,6 +160,9 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
       case "--force":
         force = true;
         break;
+      case "--retry-failed":
+        retryFailed = true;
+        break;
       case "--max-pages":
         maxPages = parsePositiveInteger(readOptionValue(args, index, arg), arg);
         index += 1;
@@ -164,10 +187,25 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
     }
   }
 
+  stages ??= parsePipelineStages(
+    retryFailed ? "embed,store,upsert" : undefined,
+  );
+  if (retryFailed && (stages.has("scrape") || !stages.has("embed"))) {
+    throw new Error(
+      "--retry-failed requires the embed stage and cannot include scrape",
+    );
+  }
+  if (stages.has("embed") && !stages.has("store")) {
+    throw new Error(
+      "Cron embedding requires --stages embed,store (add upsert to index Qdrant). Use pnpm embed for local files.",
+    );
+  }
+
   return {
     categoryArgs,
     dryRun,
     force,
+    retryFailed,
     stages,
     maxPages,
     maxItems,
@@ -175,76 +213,6 @@ function parseArgs(args: string[]): Omit<CliOptions, "categories"> & {
     mode,
     discoverLeaves,
     companyId,
-  };
-}
-
-async function fileExists(filePath: string) {
-  try {
-    await access(filePath, constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-async function discoverItemFiles(itemsDir: string, vectorsDir: string) {
-  if (!(await fileExists(itemsDir))) {
-    return [];
-  }
-
-  const files: string[] = [];
-
-  async function walk(dir: string) {
-    const entries = await readdir(dir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const entryPath = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        if (path.resolve(entryPath) === path.resolve(vectorsDir)) {
-          continue;
-        }
-
-        if (entry.name === "runs") {
-          continue;
-        }
-
-        await walk(entryPath);
-        continue;
-      }
-
-      if (entry.isFile() && /^\d+\.json$/.test(entry.name)) {
-        files.push(entryPath);
-      }
-    }
-  }
-
-  await walk(itemsDir);
-  return files.sort();
-}
-
-async function readItemSummary(filePath: string): Promise<ItemSummary> {
-  const value = JSON.parse(await readFile(filePath, "utf8")) as unknown;
-
-  if (!isRecord(value) || typeof value.auctionet_id !== "number") {
-    throw new Error(`${filePath} is missing numeric auctionet_id`);
-  }
-
-  if (
-    !Array.isArray(value.image_urls) ||
-    !value.image_urls.every((url) => typeof url === "string")
-  ) {
-    throw new Error(`${filePath} is missing image_urls string array`);
-  }
-
-  return {
-    auctionet_id: value.auctionet_id,
-    status: typeof value.status === "string" ? value.status : null,
-    image_urls: value.image_urls,
   };
 }
 
@@ -298,59 +266,243 @@ function parseScrapeSaved(output: string) {
   return Number(matches[matches.length - 1][1]);
 }
 
-export async function prepareVectors(
+let indexingClient:
+  | Promise<typeof import("../lib/qdrant").qdrantClient>
+  | undefined;
+
+export async function indexCategory(
   category: CatalogCategory,
-  dryRun: boolean,
-  limit: number | null = null,
+  options: Pick<
+    CliOptions,
+    "stages" | "dryRun" | "force" | "maxItems" | "retryFailed"
+  >,
+  embedBudget: { remaining: number | null },
 ) {
-  const { catalogObjectExists, downloadCatalogObject } =
-    await import("../lib/catalog-bucket");
-  const itemsDir = categoryItemsDir(category.segment);
-  const vectorsDir = categoryVectorsDir(category.segment);
-  const itemFiles = await discoverItemFiles(itemsDir, vectorsDir);
-
-  let downloaded = 0;
-  let unsold = 0;
-  const pending: string[] = [];
-
-  await mkdir(vectorsDir, { recursive: true });
-
-  for (const itemPath of itemFiles) {
-    if (limit !== null && pending.length >= limit) break;
-    const item = await readItemSummary(itemPath);
-
-    if (item.status !== "sold") {
-      unsold += 1;
-      continue;
+  const embedding = options.stages.has("embed");
+  const upserting = options.stages.has("upsert");
+  const itemsPrefix = categoryBucketPrefix(category.segment);
+  const vectorsPrefix = categoryVectorsBucketPrefix(category.segment);
+  const prefix = embedding ? itemsPrefix : vectorsPrefix;
+  const collectionName = referenceCollection(category.segment);
+  const client = upserting
+    ? await (indexingClient ??= import("../lib/qdrant").then(
+        ({ qdrantClient }) => qdrantClient,
+      ))
+    : null;
+  const collectionExists =
+    !options.dryRun ||
+    !client ||
+    (await client.collectionExists(collectionName)).exists;
+  const startedAt = Date.now();
+  const summary = {
+    checked: 0,
+    embedded: 0,
+    reused: 0,
+    indexed: 0,
+    skipped: 0,
+    unsold: 0,
+    failed: 0,
+    images: 0,
+  };
+  const log = (message: string) =>
+    console.log(`[${category.segment}] ${message}`);
+  const failedItems = await listFailedCatalogItems(category.segment, log);
+  const clearFailure = async (itemKey: string) => {
+    if (!options.dryRun && failedItems.has(itemKey)) {
+      await clearCatalogFailure(itemKey);
+      failedItems.delete(itemKey);
+      log(`Removed resolved failure: ${itemKey}`);
     }
+  };
+  log(
+    `Reading bucket items into memory${options.dryRun ? " (dry run: reads only)" : ""}`,
+  );
 
-    const relative = path.relative(itemsDir, itemPath);
-    const vectorPath = path.join(vectorsDir, relative);
-    const vectorKey = localPathToBucketKey(vectorPath);
+  // ponytail: one worker per category; use shared locks if assignments ever overlap.
+  try {
+    const pages = options.retryFailed
+      ? [[...failedItems]]
+      : listCatalogKeyPages(prefix, log);
+    for await (const page of pages) {
+      for (const key of page) {
+        const fromItems = embedding || options.retryFailed;
+        const relative = key.slice(
+          (fromItems ? itemsPrefix : vectorsPrefix).length + 1,
+        );
+        if (!/^\d+\/\d+\.json$/.test(relative)) continue;
+        if (embedding && embedBudget.remaining === 0) return summary;
+        if (
+          !embedding &&
+          options.maxItems !== null &&
+          summary.checked >= options.maxItems
+        )
+          return summary;
+        const itemKey = fromItems ? key : `${itemsPrefix}/${relative}`;
+        const vectorKey = `${vectorsPrefix}/${relative}`;
+        summary.checked += 1;
+        const label = `Item ${summary.checked}: ${relative}`;
+        log(`${label} — reading item JSON`);
+        let vectorsSaved = false;
+        try {
+          if (
+            !options.retryFailed &&
+            failedItems.has(itemKey) &&
+            (await isPermanentCatalogFailure(itemKey))
+          ) {
+            summary.skipped += 1;
+            log(`${label} — skipped (permanent failure; use --retry-failed)`);
+            continue;
+          }
+          const raw = await readCatalogJson(itemKey);
+          const item = validateEmbeddingItem(raw, itemKey);
+          if (String(item.auctionet_id) !== path.basename(relative, ".json")) {
+            throw new CatalogItemError(
+              `Item ID does not match bucket key: ${itemKey}`,
+            );
+          }
+          if (item.status !== "sold") {
+            summary.unsold += 1;
+            log(`${label} — skipped (${item.status ?? "missing status"})`);
+            continue;
+          }
+          if (
+            !Number.isSafeInteger(
+              item.auctionet_id * MAX_REFERENCES_PER_ITEM +
+                MAX_REFERENCES_PER_ITEM -
+                1,
+            ) ||
+            item.auctionet_id < 1 ||
+            item.image_urls.length === 0 ||
+            item.image_urls.length > MAX_REFERENCES_PER_ITEM
+          ) {
+            throw new CatalogItemError(
+              `Invalid item ID or image count in ${itemKey}`,
+            );
+          }
+          const metadata = validateAuctionetItem(raw, itemKey);
+          if (client)
+            log(
+              `${label} — checking Qdrant duplicate IDs (${item.image_urls.length} images)`,
+            );
+          const indexed =
+            client && collectionExists
+              ? await artifactAlreadySeeded(
+                  client,
+                  collectionName,
+                  expectedPointIds(item.auctionet_id, item.image_urls.length),
+                )
+              : false;
+          if (indexed && !options.force) {
+            summary.skipped += 1;
+            log(`${label} — skipped (fully indexed)`);
+            await clearFailure(itemKey);
+            continue;
+          }
 
-    if (await fileExists(vectorPath)) {
-      continue;
+          log(`${label} — checking saved vector artifact`);
+          const saved = !embedding || (await catalogObjectExists(vectorKey));
+          if (!saved && indexed) {
+            summary.skipped += 1;
+            log(
+              `${label} — skipped (fully indexed; no saved artifact for --force)`,
+            );
+            await clearFailure(itemKey);
+            continue;
+          }
+          if (!saved && options.dryRun) {
+            if (embedBudget.remaining !== null) embedBudget.remaining -= 1;
+            summary.embedded += 1;
+            summary.images += item.image_urls.length;
+            if (upserting) summary.indexed += 1;
+            log(
+              `${label} — would embed ${item.image_urls.length} images → upload ${vectorKey}${upserting ? " → upsert Qdrant" : ""}`,
+            );
+            if (embedBudget.remaining === 0) return summary;
+            continue;
+          }
+
+          let artifact;
+          if (saved) {
+            log(`${label} — reading saved vectors into memory`);
+            artifact = validateVectorArtifact(
+              await readCatalogJson(vectorKey),
+              vectorKey,
+            );
+            summary.reused += 1;
+          } else {
+            if (embedBudget.remaining !== null) embedBudget.remaining -= 1;
+            log(`${label} — embedding ${item.image_urls.length} images`);
+            artifact = validateVectorArtifact(
+              await embedAuctionetItem(item, {
+                onProgress: (message) => log(`${label} — ${message}`),
+              }),
+              vectorKey,
+            );
+            buildPoints(artifact, metadata);
+            summary.embedded += 1;
+            summary.images += artifact.references.length;
+            log(`${label} — uploading vector artifact: ${vectorKey}`);
+            const stored = await putCatalogObject(
+              vectorKey,
+              `${JSON.stringify(artifact)}\n`,
+            );
+            if (stored.skipped)
+              artifact = validateVectorArtifact(
+                await readCatalogJson(vectorKey),
+                vectorKey,
+              );
+            log(`${label} — vector artifact saved in bucket`);
+          }
+
+          // Validate the item/artifact pair even in embed/store-only runs.
+          buildPoints(artifact, metadata);
+          vectorsSaved = true;
+          await clearFailure(itemKey);
+          if (upserting) {
+            log(
+              `${label} — ${options.dryRun ? "would upsert" : "upserting"} ${artifact.references.length} Qdrant points`,
+            );
+            const result = await upsertArtifact(
+              artifact,
+              metadata,
+              {
+                collectionName,
+                batchSize: 100,
+                force: options.force,
+                dryRun: options.dryRun,
+              },
+              client,
+              vectorKey,
+            );
+            if (result.skipped) summary.skipped += 1;
+            else summary.indexed += 1;
+            log(`${label} — ${options.dryRun ? "planned" : "completed"}`);
+          }
+        } catch (error) {
+          summary.failed += 1;
+          console.error(
+            `[${category.segment}] ${label} — failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          if (embedding && !vectorsSaved && !options.dryRun) {
+            await recordCatalogFailure(itemKey, error);
+          }
+          if (error instanceof CatalogItemError) continue;
+          // Stop on service failures rather than spending on more embeddings during an outage.
+          throw error;
+        } finally {
+          log(
+            `Progress: ${summary.checked} checked, ${summary.embedded} ${options.dryRun ? "would embed" : "embedded"}, ${summary.reused} reused, ${summary.indexed} ${options.dryRun ? "would index" : "indexed"}, ${summary.skipped} skipped, ${summary.unsold} unsold, ${summary.failed} failed; elapsed ${formatDuration(Date.now() - startedAt)}; embedding budget ${embedBudget.remaining ?? "unlimited"}`,
+          );
+        }
+        if (embedding && embedBudget.remaining === 0) return summary;
+      }
     }
-
-    // Restore durable artifacts before embed checks for local files.
-    // Qdrant point existence only skips upsert, never artifact restoration.
-    if (dryRun) {
-      console.log(`dry-run would fetch or embed vector: ${relative}`);
-      pending.push(itemPath);
-      continue;
-    }
-
-    if (await catalogObjectExists(vectorKey)) {
-      await downloadCatalogObject(vectorKey, vectorPath);
-      console.log(`downloaded vector: ${relative}`);
-      downloaded += 1;
-      continue;
-    }
-
-    pending.push(itemPath);
+    return summary;
+  } finally {
+    log(
+      `Summary: ${summary.checked} checked, ${summary.embedded} ${options.dryRun ? "would embed" : "embedded"} (${summary.images} images), ${summary.reused} reused, ${summary.indexed} ${options.dryRun ? "would index" : "indexed"}, ${summary.skipped} skipped, ${summary.unsold} unsold, ${summary.failed} failed in ${formatDuration(Date.now() - startedAt)}`,
+    );
   }
-
-  return { downloaded, pendingEmbed: pending.length, unsold, pending };
 }
 
 async function runCategory(
@@ -359,9 +511,6 @@ async function runCategory(
   scrapeMaxItems: number | null,
   embedBudget: { remaining: number | null },
 ) {
-  const itemsDir = categoryItemsDir(category.segment);
-  const vectorsDir = categoryVectorsDir(category.segment);
-  const itemsPrefix = categoryBucketPrefix(category.segment);
   let scrapedSaved = 0;
 
   console.log(`\n=== ${category.segment} ===`);
@@ -400,118 +549,25 @@ async function runCategory(
     }
   }
 
-  const needsLocal =
-    options.stages.has("embed") ||
-    options.stages.has("store") ||
-    options.stages.has("upsert");
-
-  if (!needsLocal) {
-    console.log("Skipping bucket → local sync (no embed/store/upsert stages)");
-    return scrapedSaved;
-  }
-
-  const { syncCatalogPrefixDown, syncVectorsDirUp } =
-    await import("../lib/catalog-bucket");
-
-  await mkdir(itemsDir, { recursive: true });
-
-  console.log(
-    "Syncing Auctionet Item JSON from bucket (skip existing local)...",
-  );
-  if (options.dryRun) {
-    console.log(`dry-run sync down: ${itemsPrefix}`);
-  } else {
-    const down = await syncCatalogPrefixDown({ prefix: itemsPrefix });
-    console.log(
-      `bucket → local items: downloaded ${down.downloaded}, skipped ${down.skipped}`,
-    );
-  }
-
-  console.log("Preparing Vector Artifacts (reuse local and bucket vectors)...");
-  const prepared = await prepareVectors(
-    category,
-    options.dryRun,
-    options.stages.has("embed") && embedBudget.remaining !== 0
-      ? embedBudget.remaining
-      : null,
-  );
-  console.log(
-    `prepare vectors: downloaded ${prepared.downloaded}, pending embed ${prepared.pendingEmbed}, unsold ${prepared.unsold}`,
-  );
-
-  if (options.stages.has("embed") && embedBudget.remaining !== 0) {
-    const embedArgs = [
-      "--items",
-      itemsDir,
-      "--out",
-      vectorsDir,
-    ];
-    if (options.stages.has("upsert")) embedArgs.push("--skip-indexed");
-    if (embedBudget.remaining !== null) {
-      embedArgs.push("--max-items", String(embedBudget.remaining));
-    }
-    if (options.dryRun) {
-      embedArgs.push("--dry-run");
-    }
-
-    console.log("Embedding images (skips existing Vector Artifacts)...");
-    const summary = await embedAuctionetVectors({
-      ...parseEmbedArgs(embedArgs),
-      itemFiles: prepared.pending,
-    });
-    console.log(
-      `Embed summary: ${summary.embedded} items, ${summary.images} images, ${summary.skipped} skipped, ${summary.failed} failed`,
-    );
-    if (embedBudget.remaining !== null) {
-      embedBudget.remaining -= summary.embedded + summary.failed;
-    }
-    if (summary.failed > 0) {
-      throw new Error(`Embedding failed for ${summary.failed} items`);
-    }
-  }
-
-  if (options.stages.has("store")) {
-    console.log("Storing Vector Artifacts in bucket (skip existing remote)...");
-    if (options.dryRun) {
-      console.log(`dry-run sync up vectors: ${vectorsDir}`);
-    } else {
-      const up = await syncVectorsDirUp({ vectorsDir });
+  if (options.stages.has("embed") || options.stages.has("upsert")) {
+    await indexCategory(category, options, embedBudget);
+  } else if (options.stages.has("store")) {
+    // Explicit recovery command for artifacts made by the standalone local embed CLI.
+    const { syncVectorsDirUp } = await import("../lib/catalog-bucket");
+    const vectorsDir = categoryVectorsDir(category.segment);
+    if (options.dryRun)
+      console.log(`dry-run: upload existing local vectors from ${vectorsDir}`);
+    else {
+      const up = await syncVectorsDirUp({
+        vectorsDir,
+        onProgress: (done, total) =>
+          console.log(`Store progress: ${done}/${total} local artifacts`),
+      });
       console.log(
         `local → bucket vectors: uploaded ${up.uploaded}, skipped ${up.skipped}`,
       );
     }
   }
-
-  if (options.stages.has("upsert")) {
-    const upsertArgs = ["--vectors", vectorsDir, "--items", itemsDir];
-    if (options.maxItems !== null) {
-      upsertArgs.push("--max-items", String(options.maxItems));
-    }
-    if (options.dryRun) {
-      upsertArgs.push("--dry-run");
-    }
-    if (options.force) {
-      upsertArgs.push("--force");
-    }
-
-    console.log(
-      options.force
-        ? "Upserting Qdrant (force: rewriting existing payloads)..."
-        : "Upserting Qdrant (skips artifacts whose points already exist)...",
-    );
-    const upsertResult = await runScript(
-      "scripts/upsert.ts",
-      upsertArgs,
-      false,
-    );
-    if (upsertResult.code !== 0) {
-      throw new Error(`upsert exited with code ${upsertResult.code}`);
-    }
-  }
-
-  console.log(
-    `bucket vectors prefix: ${categoryVectorsBucketPrefix(category.segment)}`,
-  );
 
   return scrapedSaved;
 }
@@ -545,6 +601,7 @@ async function main() {
     categories,
     dryRun: parsed.dryRun,
     force: parsed.force,
+    retryFailed: parsed.retryFailed,
     stages: parsed.stages,
     maxPages: parsed.maxPages,
     maxItems: parsed.maxItems,
@@ -564,7 +621,7 @@ async function main() {
       .join(", ")}`,
   );
 
-  const needsLocal =
+  const needsIndexing =
     options.stages.has("embed") ||
     options.stages.has("store") ||
     options.stages.has("upsert");
@@ -585,7 +642,7 @@ async function main() {
   let totalSaved = 0;
 
   for (const category of options.categories) {
-    if (options.stages.has("scrape") && scrapeBudget === 0 && !needsLocal) {
+    if (options.stages.has("scrape") && scrapeBudget === 0 && !needsIndexing) {
       console.log(
         `\nScrape --max-items budget exhausted after ${totalSaved} new items; stopping`,
       );
@@ -624,7 +681,10 @@ async function main() {
   console.log("\nCatalog pipeline finished");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+)
   main()
     .catch((error) => {
       console.error(error instanceof Error ? error.message : error);
