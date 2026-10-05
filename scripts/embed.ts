@@ -14,6 +14,7 @@ import { pathToFileURL } from "node:url";
 import { expectedPointIds, referenceCollection } from "../lib/catalog-paths";
 import { formatDuration } from "../lib/format-duration";
 import { setTimeout as sleep } from "node:timers/promises";
+import sharp from "sharp";
 
 type CliOptions = {
   itemsDir: string;
@@ -68,6 +69,7 @@ const DEFAULT_MAX_RETRIES = 5;
 const EMBEDDING_MODEL = "google/gemini-embedding-2";
 const EMBEDDING_DIMENSIONS = 3072;
 const OPENROUTER_EMBEDDINGS_URL = "https://openrouter.ai/api/v1/embeddings";
+const MAX_EMBEDDING_REQUEST_BYTES = 50 * 1024 * 1024;
 
 function usage() {
   return [
@@ -233,7 +235,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function validateAuctionetItem(
+export function validateAuctionetItem(
   value: unknown,
   filePath: string,
 ): AuctionetItemJson {
@@ -396,10 +398,74 @@ function extractEmbeddings(body: unknown, expectedCount: number) {
   });
 }
 
+async function prepareInlineImages(imageUrls: string[]) {
+  return Promise.all(
+    imageUrls.map(async (url) => {
+      try {
+        const response = await fetch(url, {
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!response.ok) {
+          throw new Error(`Image download failed (${response.status})`);
+        }
+        const bytes = Buffer.from(await response.arrayBuffer());
+        const image = sharp(bytes);
+        const { format } = await image.metadata();
+        // Decode fully; keep JPEG/PNG bytes to avoid inflating large photos.
+        await image.stats();
+        const supported = format === "jpeg" || format === "png";
+        const data = supported ? bytes : await image.png().toBuffer();
+        const mime = supported ? format : "png";
+        return `data:image/${mime};base64,${data.toString("base64")}`;
+      } catch (error) {
+        throw new Error(
+          `Cannot prepare embedding image ${url}: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        );
+      }
+    }),
+  );
+}
+
 async function embedImageUrlBatch(
   imageUrls: string[],
   options: Pick<CliOptions, "maxRetries">,
-) {
+  inlineUrls?: string[],
+): Promise<number[][]> {
+  const inputUrls = inlineUrls ?? imageUrls;
+  const requestBody = JSON.stringify({
+    model: EMBEDDING_MODEL,
+    input: inputUrls.map((imageUrl) => ({
+      content: [{ type: "image_url", image_url: { url: imageUrl } }],
+    })),
+    encoding_format: "float",
+    dimensions: EMBEDDING_DIMENSIONS,
+  });
+  const requestBytes = Buffer.byteLength(requestBody);
+  const splitBatch = async () => {
+    if (imageUrls.length === 1) {
+      throw new Error(
+        `Embedding image exceeds the OpenRouter request size limit (${requestBytes} bytes): ${imageUrls[0]}`,
+      );
+    }
+    const middle = Math.ceil(imageUrls.length / 2);
+    console.warn(
+      `Splitting embedding batch of ${imageUrls.length} images to fit the request size limit`,
+    );
+    const first = await embedImageUrlBatch(
+      imageUrls.slice(0, middle),
+      options,
+      inlineUrls?.slice(0, middle),
+    );
+    const second = await embedImageUrlBatch(
+      imageUrls.slice(middle),
+      options,
+      inlineUrls?.slice(middle),
+    );
+    return [...first, ...second];
+  };
+  if (requestBytes > MAX_EMBEDDING_REQUEST_BYTES) return splitBatch();
+
   for (let attempt = 0; attempt <= options.maxRetries; attempt += 1) {
     let response: Response;
 
@@ -410,21 +476,7 @@ async function embedImageUrlBatch(
           Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          model: EMBEDDING_MODEL,
-          input: imageUrls.map((imageUrl) => ({
-            content: [
-              {
-                type: "image_url",
-                image_url: {
-                  url: imageUrl,
-                },
-              },
-            ],
-          })),
-          encoding_format: "float",
-          dimensions: EMBEDDING_DIMENSIONS,
-        }),
+        body: requestBody,
       });
     } catch (error) {
       if (attempt === options.maxRetries) {
@@ -447,9 +499,26 @@ async function embedImageUrlBatch(
       return extractEmbeddings(body, imageUrls.length);
     }
 
+    const errorMessage = formatOpenRouterError(body);
+    if (response.status === 413) return splitBatch();
+    if (
+      !inlineUrls &&
+      response.status === 400 &&
+      errorMessage.includes("Provided image is not valid")
+    ) {
+      console.warn(
+        "OpenRouter rejected image URLs; retrying with validated inline images",
+      );
+      return embedImageUrlBatch(
+        imageUrls,
+        options,
+        await prepareInlineImages(imageUrls),
+      );
+    }
+
     if (!isRetryableStatus(response.status) || attempt === options.maxRetries) {
       throw new Error(
-        `OpenRouter embedding request failed (${response.status}): ${formatOpenRouterError(body)}`,
+        `OpenRouter embedding request failed (${response.status}): ${errorMessage}; images: ${imageUrls.join(", ")}`,
       );
     }
 
@@ -477,6 +546,57 @@ async function writeJsonAtomically(filePath: string, value: unknown) {
   const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
   await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`);
   await rename(tempPath, filePath);
+}
+
+export async function embedAuctionetItem(
+  item: AuctionetItemJson,
+  options: {
+    batchSize?: number;
+    delayMs?: number;
+    maxRetries?: number;
+    onProgress?: (message: string) => void;
+  } = {},
+): Promise<VectorArtifact> {
+  if (!process.env.OPENROUTER_API_KEY)
+    throw new Error("OPENROUTER_API_KEY must be set");
+  const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
+  const delayMs = options.delayMs ?? DEFAULT_DELAY_MS;
+  const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+  const references: ReferenceVector[] = [];
+  let imageOffset = 0;
+
+  for (const imageUrlBatch of chunk(item.image_urls, batchSize)) {
+    options.onProgress?.(
+      `Embedding images ${imageOffset + 1}–${imageOffset + imageUrlBatch.length}/${item.image_urls.length}`,
+    );
+    const embeddings = await embedImageUrlBatch(imageUrlBatch, { maxRetries });
+
+    for (let index = 0; index < imageUrlBatch.length; index += 1) {
+      const imageUrl = imageUrlBatch[index];
+
+      references.push({
+        image_index: imageOffset + index,
+        image_url: imageUrl,
+        embedding: embeddings[index],
+      });
+    }
+
+    imageOffset += imageUrlBatch.length;
+
+    if (delayMs > 0) {
+      await sleep(delayMs);
+    }
+  }
+
+  return {
+    auctionet_id: item.auctionet_id,
+    source_url: item.source_url ?? null,
+    title: item.title ?? null,
+    embedded_at: new Date().toISOString(),
+    model: EMBEDDING_MODEL,
+    dimensions: EMBEDDING_DIMENSIONS,
+    references,
+  };
 }
 
 export async function embedItem(
@@ -540,46 +660,15 @@ export async function embedItem(
     }
   }
 
-  const references: ReferenceVector[] = [];
-  let imageOffset = 0;
-
-  for (const imageUrlBatch of chunk(item.image_urls, options.batchSize)) {
-    const embeddings = await embedImageUrlBatch(imageUrlBatch, options);
-
-    for (let index = 0; index < imageUrlBatch.length; index += 1) {
-      const imageUrl = imageUrlBatch[index];
-
-      references.push({
-        image_index: imageOffset + index,
-        image_url: imageUrl,
-        embedding: embeddings[index],
-      });
-    }
-
-    imageOffset += imageUrlBatch.length;
-
-    if (options.delayMs > 0) {
-      await sleep(options.delayMs);
-    }
-  }
-
-  const artifact: VectorArtifact = {
-    auctionet_id: item.auctionet_id,
-    source_url: item.source_url ?? null,
-    title: item.title ?? null,
-    embedded_at: new Date().toISOString(),
-    model: EMBEDDING_MODEL,
-    dimensions: EMBEDDING_DIMENSIONS,
-    references,
-  };
+  const artifact = await embedAuctionetItem(item, options);
 
   await writeJsonAtomically(outputPath, artifact);
 
   return {
-    imageCount: references.length,
+    imageCount: artifact.references.length,
     skipped: false,
     unsold: false,
-    message: `wrote: ${relativeOutputPath} (${references.length} images)`,
+    message: `wrote: ${relativeOutputPath} (${artifact.references.length} images)`,
   };
 }
 
