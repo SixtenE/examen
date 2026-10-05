@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { referenceCollection } from "../lib/catalog-paths";
 import { EMBEDDING_DIMENSIONS } from "../lib/embeddings";
 
@@ -151,7 +152,10 @@ function parseArgs(args: string[]): CliOptions {
         index += 1;
         break;
       case "--batch-size":
-        batchSize = parsePositiveInteger(readOptionValue(args, index, arg), arg);
+        batchSize = parsePositiveInteger(
+          readOptionValue(args, index, arg),
+          arg,
+        );
         index += 1;
         break;
       case "--max-items":
@@ -224,14 +228,24 @@ async function discoverJsonFiles(dir: string): Promise<string[]> {
   return files.sort();
 }
 
-function validateReference(value: unknown, filePath: string, index: number): ReferenceVector {
+function validateReference(
+  value: unknown,
+  filePath: string,
+  index: number,
+): ReferenceVector {
   if (!isRecord(value)) {
     throw new Error(`${filePath} reference ${index} must be an object`);
   }
 
   const imageIndex = value.image_index;
-  if (!Number.isInteger(imageIndex) || typeof imageIndex !== "number" || imageIndex < 0) {
-    throw new Error(`${filePath} reference ${index} is missing non-negative integer image_index`);
+  if (
+    !Number.isInteger(imageIndex) ||
+    typeof imageIndex !== "number" ||
+    imageIndex < 0
+  ) {
+    throw new Error(
+      `${filePath} reference ${index} is missing non-negative integer image_index`,
+    );
   }
 
   if (imageIndex >= MAX_REFERENCES_PER_ITEM) {
@@ -244,8 +258,13 @@ function validateReference(value: unknown, filePath: string, index: number): Ref
     throw new Error(`${filePath} reference ${index} is missing image_url`);
   }
 
-  if (!Array.isArray(value.embedding) || !value.embedding.every((entry) => typeof entry === "number")) {
-    throw new Error(`${filePath} reference ${index} is missing numeric embedding array`);
+  if (
+    !Array.isArray(value.embedding) ||
+    !value.embedding.every((entry) => typeof entry === "number")
+  ) {
+    throw new Error(
+      `${filePath} reference ${index} is missing numeric embedding array`,
+    );
   }
 
   if (value.embedding.length !== EMBEDDING_DIMENSIONS) {
@@ -261,7 +280,10 @@ function validateReference(value: unknown, filePath: string, index: number): Ref
   };
 }
 
-function validateVectorArtifact(value: unknown, filePath: string): VectorArtifact {
+export function validateVectorArtifact(
+  value: unknown,
+  filePath: string,
+): VectorArtifact {
   if (!isRecord(value)) {
     throw new Error(`${filePath} must contain a JSON object`);
   }
@@ -271,11 +293,15 @@ function validateVectorArtifact(value: unknown, filePath: string): VectorArtifac
   }
 
   if (value.model !== EMBEDDING_MODEL) {
-    throw new Error(`${filePath} model is ${String(value.model)}, expected ${EMBEDDING_MODEL}`);
+    throw new Error(
+      `${filePath} model is ${String(value.model)}, expected ${EMBEDDING_MODEL}`,
+    );
   }
 
   if (value.dimensions !== EMBEDDING_DIMENSIONS) {
-    throw new Error(`${filePath} dimensions is ${String(value.dimensions)}, expected ${EMBEDDING_DIMENSIONS}`);
+    throw new Error(
+      `${filePath} dimensions is ${String(value.dimensions)}, expected ${EMBEDDING_DIMENSIONS}`,
+    );
   }
 
   if (!Array.isArray(value.references)) {
@@ -289,7 +315,9 @@ function validateVectorArtifact(value: unknown, filePath: string): VectorArtifac
     embedded_at: typeof value.embedded_at === "string" ? value.embedded_at : "",
     model: value.model,
     dimensions: value.dimensions,
-    references: value.references.map((reference, index) => validateReference(reference, filePath, index)),
+    references: value.references.map((reference, index) =>
+      validateReference(reference, filePath, index),
+    ),
   };
 }
 
@@ -325,7 +353,10 @@ function parseSoldAtUnix(value: unknown): number | null {
   return Math.trunc(value);
 }
 
-function validateAuctionetItem(value: unknown, filePath: string): AuctionetItemJson {
+export function validateAuctionetItem(
+  value: unknown,
+  filePath: string,
+): AuctionetItemJson {
   if (!isRecord(value)) {
     throw new Error(`${filePath} must contain a JSON object`);
   }
@@ -334,9 +365,15 @@ function validateAuctionetItem(value: unknown, filePath: string): AuctionetItemJ
     throw new Error(`${filePath} is missing numeric auctionet_id`);
   }
 
-  const currency = typeof value.currency === "string" && value.currency.length > 0 ? value.currency : "SEK";
+  const currency =
+    typeof value.currency === "string" && value.currency.length > 0
+      ? value.currency
+      : "SEK";
   const metadata = isRecord(value.metadata) ? value.metadata : null;
-  const vipItem = metadata && isRecord(metadata.vip_data_item) ? metadata.vip_data_item : null;
+  const vipItem =
+    metadata && isRecord(metadata.vip_data_item)
+      ? metadata.vip_data_item
+      : null;
 
   return {
     auctionet_id: value.auctionet_id,
@@ -361,7 +398,11 @@ async function readAuctionetItem(filePath: string) {
   return validateAuctionetItem(await readJson(filePath), filePath);
 }
 
-function getItemPath(artifactPath: string, vectorsDir: string, itemsDir: string) {
+function getItemPath(
+  artifactPath: string,
+  vectorsDir: string,
+  itemsDir: string,
+) {
   return path.join(itemsDir, path.relative(vectorsDir, artifactPath));
 }
 
@@ -399,7 +440,9 @@ function createProgressTracker(totalItems: number, windowSize = 50) {
       }
     },
     report() {
-      const averageMs = recentDurations.reduce((sum, value) => sum + value, 0) / recentDurations.length;
+      const averageMs =
+        recentDurations.reduce((sum, value) => sum + value, 0) /
+        recentDurations.length;
       const remaining = totalItems - processed;
       const etaMs = averageMs * remaining;
 
@@ -420,9 +463,14 @@ function chunk<T>(values: T[], size: number) {
   return chunks;
 }
 
-function buildPoints(artifact: VectorArtifact, item: AuctionetItemJson): ReferencePoint[] {
+export function buildPoints(
+  artifact: VectorArtifact,
+  item: AuctionetItemJson,
+): ReferencePoint[] {
   if (artifact.auctionet_id !== item.auctionet_id) {
-    throw new Error(`auctionet_id mismatch: artifact ${artifact.auctionet_id}, item ${item.auctionet_id}`);
+    throw new Error(
+      `auctionet_id mismatch: artifact ${artifact.auctionet_id}, item ${item.auctionet_id}`,
+    );
   }
 
   return artifact.references.map((reference) => ({
@@ -462,7 +510,11 @@ async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-async function artifactAlreadySeeded(client: QdrantClient, collectionName: string, pointIds: number[]) {
+export async function artifactAlreadySeeded(
+  client: QdrantClient,
+  collectionName: string,
+  pointIds: number[],
+) {
   if (pointIds.length === 0) {
     return true;
   }
@@ -487,17 +539,36 @@ async function seedArtifact(
 ): Promise<{ referenceCount: number; skipped: boolean; unsold: boolean }> {
   const relativeArtifactPath = path.relative(process.cwd(), artifactPath);
   const artifact = await readVectorArtifact(artifactPath);
-  const item = await readAuctionetItem(getItemPath(artifactPath, vectorsDir, itemsDir));
+  const item = await readAuctionetItem(
+    getItemPath(artifactPath, vectorsDir, itemsDir),
+  );
 
   if (item.status !== "sold") {
-    console.log(`skip unsold: ${relativeArtifactPath} (status: ${item.status ?? "missing"})`);
+    console.log(
+      `skip unsold: ${relativeArtifactPath} (status: ${item.status ?? "missing"})`,
+    );
     return { referenceCount: 0, skipped: false, unsold: true };
   }
 
+  return upsertArtifact(artifact, item, options, client, relativeArtifactPath);
+}
+
+export async function upsertArtifact(
+  artifact: VectorArtifact,
+  item: AuctionetItemJson,
+  options: Pick<
+    CliOptions,
+    "collectionName" | "batchSize" | "force" | "dryRun"
+  >,
+  client: QdrantClient | null,
+  label = String(artifact.auctionet_id),
+): Promise<{ referenceCount: number; skipped: boolean; unsold: boolean }> {
+  if (item.status !== "sold")
+    return { referenceCount: 0, skipped: false, unsold: true };
   const points = buildPoints(artifact, item);
 
   if (options.dryRun) {
-    console.log(`seed: ${relativeArtifactPath} (${points.length} references)`);
+    console.log(`seed: ${label} (${points.length} references)`);
     return { referenceCount: points.length, skipped: false, unsold: false };
   }
 
@@ -507,9 +578,13 @@ async function seedArtifact(
 
   if (
     !options.force &&
-    (await artifactAlreadySeeded(client, options.collectionName, points.map((point) => point.id)))
+    (await artifactAlreadySeeded(
+      client,
+      options.collectionName,
+      points.map((point) => point.id),
+    ))
   ) {
-    console.log(`skip existing: ${relativeArtifactPath}`);
+    console.log(`skip existing: ${label}`);
     return { referenceCount: 0, skipped: true, unsold: false };
   }
 
@@ -522,11 +597,14 @@ async function seedArtifact(
     );
   }
 
-  console.log(`seeded: ${relativeArtifactPath} (${points.length} references)`);
+  console.log(`seeded: ${label} (${points.length} references)`);
   return { referenceCount: points.length, skipped: false, unsold: false };
 }
 
-async function seedReferences(options: CliOptions, client: QdrantClient | null) {
+async function seedReferences(
+  options: CliOptions,
+  client: QdrantClient | null,
+) {
   const vectorsDir = path.resolve(options.vectorsDir);
   const itemsDir = path.resolve(options.itemsDir);
   let selectedArtifactFiles = await discoverJsonFiles(vectorsDir);
@@ -552,9 +630,12 @@ async function seedReferences(options: CliOptions, client: QdrantClient | null) 
     );
   } else if (client) {
     const { ensureReferenceCollection } = await import("../lib/qdrant");
-    await ensureReferenceCollection(categorySegmentFromVectorsDir(options.vectorsDir), {
-      recreate: options.recreate,
-    });
+    await ensureReferenceCollection(
+      categorySegmentFromVectorsDir(options.vectorsDir),
+      {
+        recreate: options.recreate,
+      },
+    );
   }
 
   const tracker = createProgressTracker(selectedArtifactFiles.length);
@@ -564,7 +645,13 @@ async function seedReferences(options: CliOptions, client: QdrantClient | null) 
     let uploaded = false;
 
     try {
-      const result = await seedArtifact(artifactPath, vectorsDir, itemsDir, options, client);
+      const result = await seedArtifact(
+        artifactPath,
+        vectorsDir,
+        itemsDir,
+        options,
+        client,
+      );
       if (result.unsold) {
         summary.unsold += 1;
       } else if (result.skipped) {
@@ -595,7 +682,9 @@ async function seedReferences(options: CliOptions, client: QdrantClient | null) 
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const client = options.dryRun ? null : (await import("../lib/qdrant")).qdrantClient;
+  const client = options.dryRun
+    ? null
+    : (await import("../lib/qdrant")).qdrantClient;
   const summary = await seedReferences(options, client);
 
   console.log(
@@ -607,8 +696,13 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  console.error(usage());
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    console.error(usage());
+    process.exitCode = 1;
+  });
+}

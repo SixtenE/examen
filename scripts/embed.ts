@@ -11,7 +11,16 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { expectedPointIds, referenceCollection } from "../lib/catalog-paths";
+import {
+  expectedPointIds,
+  itemBucketKey,
+  referenceCollection,
+} from "../lib/catalog-paths";
+import {
+  clearCatalogFailure,
+  listFailedCatalogItems,
+  recordCatalogFailure,
+} from "../lib/catalog-failures";
 import { formatDuration } from "../lib/format-duration";
 import { setTimeout as sleep } from "node:timers/promises";
 import sharp from "sharp";
@@ -24,6 +33,7 @@ type CliOptions = {
   maxRetries: number;
   force: boolean;
   skipIndexed: boolean;
+  retryFailed: boolean;
   dryRun: boolean;
   maxItems: number | null;
   itemFiles?: string[];
@@ -84,7 +94,8 @@ function usage() {
     "  --max-items <n>        Embed at most n items (existing/unsold items do not count)",
     "  --force                Regenerate existing vector files",
     "  --skip-indexed         Skip items already in Qdrant (requires existing collections)",
-    "  --dry-run              Print planned work without calling OpenRouter or writing files",
+    "  --retry-failed         Only retry local items recorded as failed in the bucket",
+    "  --dry-run              Print planned work without calling OpenRouter or writing files/bucket objects",
   ].join("\n");
 }
 
@@ -138,6 +149,7 @@ export function parseArgs(args: string[]): CliOptions {
   let maxRetries = DEFAULT_MAX_RETRIES;
   let force = false;
   let skipIndexed = false;
+  let retryFailed = false;
   let dryRun = false;
   let maxItems: number | null = null;
 
@@ -183,6 +195,9 @@ export function parseArgs(args: string[]): CliOptions {
       case "--skip-indexed":
         skipIndexed = true;
         break;
+      case "--retry-failed":
+        retryFailed = true;
+        break;
       case "--force":
         force = true;
         break;
@@ -226,6 +241,7 @@ export function parseArgs(args: string[]): CliOptions {
     maxRetries,
     force,
     skipIndexed,
+    retryFailed,
     dryRun,
     maxItems,
   };
@@ -680,8 +696,22 @@ export async function embedAuctionetVectors(options: CliOptions) {
   const itemsDir = path.resolve(options.itemsDir);
   const outDir = path.resolve(options.outDir);
   const startedAt = Date.now();
-  const itemFiles =
+  const segment = categorySegment(itemsDir, "--items");
+  const failedItems = await listFailedCatalogItems(segment);
+  const bucketKey = (itemPath: string) =>
+    itemBucketKey(segment, Number(path.basename(itemPath, ".json")));
+  const clearFailure = async (itemPath: string) => {
+    const key = bucketKey(itemPath);
+    if (!options.dryRun && failedItems.has(key)) {
+      await clearCatalogFailure(key);
+      failedItems.delete(key);
+    }
+  };
+  const discoveredFiles =
     options.itemFiles ?? (await discoverItemFiles(itemsDir, outDir));
+  const itemFiles = options.retryFailed
+    ? discoveredFiles.filter((itemPath) => failedItems.has(bucketKey(itemPath)))
+    : discoveredFiles;
   const summary: Summary = {
     embedded: 0,
     skipped: 0,
@@ -708,6 +738,7 @@ export async function embedAuctionetVectors(options: CliOptions) {
       (await fileExists(getOutputPath(itemPath, itemsDir, outDir)))
     ) {
       summary.skipped += 1;
+      await clearFailure(itemPath);
     } else {
       pending.push(itemPath);
     }
@@ -736,6 +767,7 @@ export async function embedAuctionetVectors(options: CliOptions) {
 
     try {
       const result = await embedItem(itemPath, outputPath, options);
+      if (!result.unsold) await clearFailure(itemPath);
       if (result.unsold) {
         summary.unsold += 1;
         quickSkips += 1;
@@ -756,6 +788,8 @@ export async function embedAuctionetVectors(options: CliOptions) {
       line = `failed: ${path.relative(process.cwd(), itemPath)}: ${
         error instanceof Error ? error.message : String(error)
       }`;
+      if (!options.dryRun)
+        await recordCatalogFailure(bucketKey(itemPath), error);
     }
 
     processed += 1;
@@ -802,9 +836,18 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
 ) {
-  main().catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    console.error(usage());
-    process.exitCode = 1;
-  });
+  main()
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : error);
+      console.error(usage());
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      try {
+        const { s3Client } = await import("../lib/s3");
+        s3Client.destroy();
+      } catch {
+        // Bucket configuration failures have already been reported by main.
+      }
+    });
 }

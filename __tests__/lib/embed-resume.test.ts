@@ -1,12 +1,43 @@
 // @vitest-environment node
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { embedItem, embedAuctionetVectors } from "../../scripts/embed";
+import {
+  embedItem,
+  embedAuctionetVectors,
+  parseArgs,
+} from "../../scripts/embed";
+import {
+  deleteCatalogObject,
+  listCatalogKeyPages,
+  putCatalogObject,
+} from "../../lib/catalog-bucket";
 
 const retrieve = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/qdrant", () => ({ qdrantClient: { retrieve } }));
+vi.mock("@/lib/catalog-bucket", () => ({
+  deleteCatalogObject: vi.fn(),
+  listCatalogKeyPages: vi.fn(),
+  putCatalogObject: vi.fn(),
+}));
+const bucketObjects = new Map<string, unknown>();
+beforeEach(() => {
+  vi.stubEnv("OPENROUTER_API_KEY", "test");
+  bucketObjects.clear();
+  vi.mocked(listCatalogKeyPages).mockImplementation(async function* (prefix) {
+    yield [...bucketObjects.keys()].filter((key) =>
+      key.startsWith(`${prefix}/`),
+    );
+  });
+  vi.mocked(putCatalogObject).mockImplementation(async (key, body) => {
+    bucketObjects.set(key, JSON.parse(String(body)));
+    return { uploaded: true, skipped: false };
+  });
+  vi.mocked(deleteCatalogObject).mockImplementation(async (key) => {
+    bucketObjects.delete(key);
+  });
+});
 const directories: string[] = [];
 afterEach(async () => {
   vi.unstubAllGlobals();
@@ -52,6 +83,7 @@ it.each([true, false])(
       itemsDir,
       outDir,
       skipIndexed: true,
+      retryFailed: false,
       force: false,
       dryRun: false,
       maxItems: null,
@@ -117,6 +149,7 @@ it("embeds 100 new items with all five images, skips existing items, and resumes
     itemsDir,
     outDir,
     skipIndexed: true,
+    retryFailed: false,
     force: false,
     dryRun: false,
     maxItems: 100,
@@ -141,54 +174,72 @@ it("embeds 100 new items with all five images, skips existing items, and resumes
   expect(fetchMock).toHaveBeenCalledTimes(101);
 });
 
-it("shares the cron embedding budget across categories", async () => {
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const root = await mkdtemp(path.join(tmpdir(), "cron-budget-"));
+it("local embedding records failures in the bucket, retries only those items, and clears successes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "embed-failures-"));
   directories.push(root);
-  const categories = ["28-paintings", "9-ceramics-porcelain", "1-furniture"];
-  for (const category of categories) {
-    const dir = path.join(root, "data/auctionet/items", category);
-    await mkdir(dir, { recursive: true });
-    for (let id = 100; id < 160; id++) {
-      await writeFile(
-        path.join(dir, `${id}.json`),
-        JSON.stringify({
-          auctionet_id: id,
-          status: "sold",
-          image_urls: Array.from(
-            { length: 5 },
-            (_, i) => `https://example.com/${id}/${i}.jpg`,
-          ),
-        }),
-      );
-    }
+  const itemsDir = path.join(root, "28-paintings");
+  const outDir = path.join(itemsDir, "vectors");
+  await mkdir(itemsDir);
+  for (const id of [123456, 123457]) {
+    await writeFile(
+      path.join(itemsDir, `${id}.json`),
+      JSON.stringify({
+        auctionet_id: id,
+        status: "sold",
+        image_urls: ["https://example.com/1.jpg"],
+      }),
+    );
   }
-  const { stdout } = await promisify(execFile)(
-    process.execPath,
-    [
-      "--import",
-      path.resolve("node_modules/tsx/dist/loader.mjs"),
-      path.resolve("scripts/cron.ts"),
-      "--dry-run",
-      "--stages",
-      "embed",
-      "--max-embed-items",
-      "100",
-      ...categories.flatMap((category) => ["--category", category]),
-    ],
-    {
-      cwd: root,
-      env: { ...process.env, TSX_TSCONFIG_PATH: path.resolve("tsconfig.json") },
-    },
+  vi.stubEnv("OPENROUTER_API_KEY", "test");
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "Bad image" }), { status: 400 }),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+  const options = {
+    itemsDir,
+    outDir,
+    skipIndexed: false,
+    retryFailed: false,
+    force: false,
+    dryRun: false,
+    maxItems: 1,
+    batchSize: 5,
+    delayMs: 0,
+    maxRetries: 0,
+  };
+  expect(await embedAuctionetVectors(options)).toMatchObject({ failed: 1 });
+  const failureKey = "scrape/28-paintings/failures/123/123456.json";
+  expect(bucketObjects.get(failureKey)).toMatchObject({
+    item_key: "scrape/28-paintings/123/123456.json",
+    error: expect.stringContaining("Bad image"),
+  });
+  fetchMock.mockResolvedValue(
+    new Response(
+      JSON.stringify({ data: [{ embedding: Array(3072).fill(0.1) }] }),
+    ),
   );
-  expect(stdout.match(/Embed summary: .*/g)).toEqual([
-    "Embed summary: 60 items, 300 images, 0 skipped, 0 failed",
-    "Embed summary: 40 items, 200 images, 0 skipped, 0 failed",
-  ]);
-  expect(stdout.match(/pending embed \d+/g)).toEqual([
-    "pending embed 60",
-    "pending embed 40",
-  ]);
-  expect(stdout).not.toContain("=== 1-furniture ===");
+  expect(
+    await embedAuctionetVectors({
+      ...options,
+      retryFailed: true,
+      dryRun: true,
+    }),
+  ).toMatchObject({ embedded: 1 });
+  expect(bucketObjects.has(failureKey)).toBe(true);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(
+    await embedAuctionetVectors({ ...options, retryFailed: true }),
+  ).toMatchObject({ embedded: 1, failed: 0 });
+  expect(bucketObjects.has(failureKey)).toBe(false);
+  expect(deleteCatalogObject).toHaveBeenCalledWith(failureKey);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  await expect(
+    readFile(path.join(outDir, "123457.json")),
+  ).rejects.toMatchObject({ code: "ENOENT" });
+  expect(
+    parseArgs(["--items", itemsDir, "--out", outDir, "--retry-failed"])
+      .retryFailed,
+  ).toBe(true);
 });

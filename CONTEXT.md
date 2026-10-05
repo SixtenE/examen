@@ -54,5 +54,9 @@ The external catalog entity on Auctionet whose metadata is scraped and whose ima
 _Avoid_: Listing, lot, catalog entry
 
 **Vector Artifact**:
-The durable bucket JSON holding one Auctionet Item's pre-computed Reference embeddings, produced by the embed stage and consumed by upsert. Local copies on the cron disk are scratch space only. Not the catalog itself; Qdrant is.
+The durable bucket JSON holding one Auctionet Item's pre-computed Reference embeddings, produced by the embed stage and consumed by upsert. The indexing cron processes it in memory and uploads it before upserting; local copies are only used by standalone file-based commands. Not the catalog itself; Qdrant is.
 _Avoid_: Vector file, embeddings file
+
+**Embedding Failure**:
+A bucket record for an Auctionet Item whose Reference vectors could not be produced and saved. The bucket is the source of truth for these failures in both local and Railway runs. A retry selects these records; successfully saved vectors or confirmed indexed References remove the record. Each record holds the item bucket key, latest error, and failure timestamp.
+_Avoid_: Local failure list, terminal log checkpoint

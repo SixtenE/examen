@@ -1,188 +1,511 @@
 // @vitest-environment node
-import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { promisify } from "node:util";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { prepareVectors } from "../../scripts/cron";
+import { indexCategory, parseArgs } from "../../scripts/cron";
+import * as embedding from "../../scripts/embed";
+import * as upsert from "../../scripts/upsert";
 import {
   catalogObjectExists,
-  downloadCatalogObject,
+  deleteCatalogObject,
+  listCatalogKeyPages,
+  readCatalogJson,
+  putCatalogObject,
 } from "@/lib/catalog-bucket";
-import { categoryItemsDir, categoryVectorsDir } from "@/lib/catalog-paths";
 import { qdrantClient } from "@/lib/qdrant";
 
-const scratch = vi.hoisted(() => ({ root: "" }));
-vi.mock("@/lib/catalog-paths", async (original) => {
-  const actual = await original<typeof import("@/lib/catalog-paths")>();
-  return {
-    ...actual,
-    categoryItemsDir: (segment: string) =>
-      actual.categoryItemsDir(segment, scratch.root),
-    categoryVectorsDir: (segment: string) =>
-      actual.categoryVectorsDir(segment, scratch.root),
-    localPathToBucketKey: (file: string) =>
-      actual.localPathToBucketKey(file, scratch.root),
-  };
-});
 vi.mock("@/lib/catalog-bucket", () => ({
   catalogObjectExists: vi.fn(),
-  downloadCatalogObject: vi.fn(),
+  deleteCatalogObject: vi.fn(),
+  listCatalogKeyPages: vi.fn(),
+  readCatalogJson: vi.fn(),
+  putCatalogObject: vi.fn(),
 }));
 vi.mock("@/lib/qdrant", () => ({
-  qdrantClient: { retrieve: vi.fn() },
+  qdrantClient: {
+    retrieve: vi.fn(),
+    upsert: vi.fn(),
+    collectionExists: vi.fn(),
+  },
 }));
-
 const category = {
   segment: "28-paintings",
   url: "https://auctionet.com/en/search/28-paintings",
 };
+const itemKey = "scrape/28-paintings/100/10001.json";
+const vectorKey = "scrape/28-paintings/vectors/100/10001.json";
+const failureKey = "scrape/28-paintings/failures/100/10001.json";
 const item = {
   auctionet_id: 10001,
   status: "sold",
-  image_urls: ["https://images.auctionet.com/10001.jpg"],
-};
-const artifact = JSON.stringify({
-  auctionet_id: item.auctionet_id,
-  model: "google/gemini-embedding-2",
-  dimensions: 3072,
-  references: [
-    {
-      image_index: 0,
-      image_url: item.image_urls[0],
-      embedding: Array(3072).fill(0.1),
-    },
+  title: "Painting",
+  price: "1 250 SEK",
+  currency: "SEK",
+  metadata: { vip_data_item: { ends_at: 1700000000 } },
+  image_urls: [
+    "https://images.auctionet.com/1.jpg",
+    "https://images.auctionet.com/2.jpg",
   ],
+};
+function artifact(id = item.auctionet_id) {
+  return {
+    auctionet_id: id,
+    source_url: null,
+    title: "Painting",
+    embedded_at: "2026-10-03T00:00:00Z",
+    model: "google/gemini-embedding-2",
+    dimensions: 3072,
+    references: item.image_urls.map((url, index) => ({
+      image_index: index,
+      image_url: url,
+      embedding: Array(3072).fill(0.1),
+    })),
+  };
+}
+const objects = new Map<string, unknown>();
+const options = () => ({
+  stages: new Set<"embed" | "store" | "upsert">(["embed", "store", "upsert"]),
+  dryRun: false,
+  force: false,
+  retryFailed: false,
+  maxItems: null,
 });
-const bucketKey = "scrape/28-paintings/vectors/100/10001.json";
-const itemPath = () =>
-  path.join(categoryItemsDir(category.segment), "100/10001.json");
-const vectorPath = () =>
-  path.join(categoryVectorsDir(category.segment), "100/10001.json");
 
-beforeEach(async () => {
+beforeEach(() => {
   vi.resetAllMocks();
-  scratch.root = await mkdtemp(path.join(tmpdir(), "examen-cron-vectors-"));
-  await mkdir(path.dirname(itemPath()), { recursive: true });
-  await writeFile(itemPath(), JSON.stringify(item));
-  vi.mocked(qdrantClient.retrieve).mockResolvedValue([{ id: 1000100 }]);
-  vi.mocked(catalogObjectExists).mockResolvedValue(true);
-  vi.mocked(downloadCatalogObject).mockImplementation(
-    async (_key, destination) => {
-      await mkdir(path.dirname(destination), { recursive: true });
-      await writeFile(destination, artifact);
+  objects.clear();
+  objects.set(itemKey, item);
+  vi.mocked(listCatalogKeyPages).mockImplementation(
+    async function* (prefix, log) {
+      log?.("Listing bucket page 1");
+      yield [...objects.keys()]
+        .filter((key) => key.startsWith(`${prefix}/`))
+        .sort();
     },
   );
-});
-
-afterEach(async () => {
-  await rm(scratch.root, { recursive: true, force: true });
-});
-
-it("restores bucket vectors on a fresh disk even when already indexed, so embed skips them", async () => {
-  const prepared = await prepareVectors(category, false);
-  expect(downloadCatalogObject).toHaveBeenCalledWith(bucketKey, vectorPath());
-  expect(prepared).toEqual({
-    downloaded: 1,
-    pendingEmbed: 0,
-    unsold: 0,
-    pending: [],
+  vi.mocked(catalogObjectExists).mockImplementation(async (key) =>
+    objects.has(key),
+  );
+  vi.mocked(readCatalogJson).mockImplementation(async (key) => {
+    if (!objects.has(key)) throw new Error(`Missing bucket object: ${key}`);
+    return objects.get(key);
   });
-  expect(await readFile(vectorPath(), "utf8")).toBe(artifact);
-  expect(qdrantClient.retrieve).not.toHaveBeenCalled();
+  vi.mocked(putCatalogObject).mockImplementation(async (key, body) => {
+    objects.set(key, JSON.parse(String(body)));
+    return { uploaded: true, skipped: false };
+  });
+  vi.mocked(deleteCatalogObject).mockImplementation(async (key) => {
+    objects.delete(key);
+  });
+  vi.mocked(qdrantClient.retrieve).mockResolvedValue([]);
+  vi.mocked(qdrantClient.upsert).mockResolvedValue({
+    operation_id: 1,
+    status: "completed",
+  });
+  vi.mocked(qdrantClient.collectionExists).mockResolvedValue({ exists: true });
+  vi.spyOn(embedding, "embedAuctionetItem").mockImplementation(async (value) =>
+    artifact(value.auctionet_id),
+  );
+  vi.spyOn(console, "log").mockImplementation(() => {});
+  vi.spyOn(console, "error").mockImplementation(() => {});
+});
+afterEach(() => vi.restoreAllMocks());
 
-  // Run the real embed CLI in dry-run mode: an absent artifact would report
-  // embedded 1 instead of skipped 1. No OpenRouter request can be made.
-  const { stdout } = await promisify(execFile)(process.execPath, [
-    "--import",
-    "tsx",
-    "scripts/embed.ts",
-    "--items",
-    categoryItemsDir(category.segment),
-    "--out",
-    categoryVectorsDir(category.segment),
-    "--dry-run",
-  ]);
-  expect(stdout).toContain(
-    "Summary: embedded 0, skipped 1, unsold 0, failed 0, images 0",
+it("uploads each completed artifact before upsert, preserves metadata, and logs progress", async () => {
+  expect(
+    await indexCategory(category, options(), { remaining: 1 }),
+  ).toMatchObject({ embedded: 1, indexed: 1, images: 2, failed: 0 });
+  expect(putCatalogObject).toHaveBeenCalledWith(vectorKey, expect.any(String));
+  expect(vi.mocked(putCatalogObject).mock.invocationCallOrder[0]).toBeLessThan(
+    vi.mocked(qdrantClient.upsert).mock.invocationCallOrder[0],
+  );
+  expect(qdrantClient.upsert).toHaveBeenCalledWith("references-28-paintings", {
+    wait: true,
+    points: [0, 1].map((index) => ({
+      id: 1000100 + index,
+      vector: Array(3072).fill(0.1),
+      payload: expect.objectContaining({
+        auctionet_id: "10001",
+        image_index: index,
+        price: 1250,
+        sold_at: 1700000000,
+        title: "Painting",
+      }),
+    })),
+  });
+  expect(console.log).toHaveBeenCalledWith(
+    expect.stringContaining("vector artifact saved in bucket"),
+  );
+  expect(console.log).toHaveBeenCalledWith(
+    expect.stringContaining("Progress: 1 checked"),
   );
 });
 
-it("keeps an existing local artifact without contacting either service", async () => {
-  await mkdir(path.dirname(vectorPath()), { recursive: true });
-  await writeFile(vectorPath(), artifact);
-  await expect(prepareVectors(category, false)).resolves.toEqual({
-    downloaded: 0,
-    pendingEmbed: 0,
-    unsold: 0,
-    pending: [],
-  });
-  expect(catalogObjectExists).not.toHaveBeenCalled();
-  expect(downloadCatalogObject).not.toHaveBeenCalled();
-  expect(qdrantClient.retrieve).not.toHaveBeenCalled();
-  expect(await readFile(vectorPath(), "utf8")).toBe(artifact);
-});
-
-it("leaves items without a durable artifact for embedding", async () => {
-  vi.mocked(catalogObjectExists).mockResolvedValue(false);
-  await expect(prepareVectors(category, false)).resolves.toEqual({
-    downloaded: 0,
-    pendingEmbed: 1,
-    unsold: 0,
-    pending: [itemPath()],
-  });
-  expect(catalogObjectExists).toHaveBeenCalledWith(bucketKey);
-  expect(downloadCatalogObject).not.toHaveBeenCalled();
-  await expect(readFile(vectorPath())).rejects.toMatchObject({
-    code: "ENOENT",
-  });
-});
-
-it("stops checking the bucket once the embed limit is reached", async () => {
-  vi.mocked(catalogObjectExists).mockResolvedValue(false);
-  for (const id of [10002, 10003]) {
-    await writeFile(
-      path.join(path.dirname(itemPath()), `${id}.json`),
-      JSON.stringify({ ...item, auctionet_id: id }),
-    );
-  }
-  const prepared = await prepareVectors(category, false, 2);
-  expect(prepared.pending).toEqual([
-    itemPath(),
-    path.join(path.dirname(itemPath()), "10002.json"),
+it("skips fully indexed items without reading or creating vector artifacts", async () => {
+  vi.mocked(qdrantClient.retrieve).mockResolvedValue([
+    { id: 1000100 },
+    { id: 1000101 },
   ]);
-  expect(catalogObjectExists).toHaveBeenCalledTimes(2);
-});
-
-it("ignores unsold items", async () => {
-  await writeFile(itemPath(), JSON.stringify({ ...item, status: "unsold" }));
-  await expect(prepareVectors(category, false)).resolves.toEqual({
-    downloaded: 0,
-    pendingEmbed: 0,
-    unsold: 1,
-    pending: [],
+  const budget = { remaining: 1 };
+  expect(await indexCategory(category, options(), budget)).toMatchObject({
+    skipped: 1,
+    embedded: 0,
   });
+  expect(budget.remaining).toBe(1);
   expect(catalogObjectExists).not.toHaveBeenCalled();
+  expect(embedding.embedAuctionetItem).not.toHaveBeenCalled();
+  expect(qdrantClient.upsert).not.toHaveBeenCalled();
 });
 
-it("does not contact storage or Qdrant in dry-run mode", async () => {
-  await expect(prepareVectors(category, true)).resolves.toEqual({
-    downloaded: 0,
-    pendingEmbed: 1,
-    unsold: 0,
-    pending: [itemPath()],
+it("reuses saved vectors to repair partial Qdrant points without embedding", async () => {
+  objects.set(vectorKey, artifact());
+  vi.mocked(qdrantClient.retrieve).mockResolvedValue([{ id: 1000100 }]);
+  expect(
+    await indexCategory(category, options(), { remaining: 1 }),
+  ).toMatchObject({ reused: 1, indexed: 1, embedded: 0 });
+  expect(embedding.embedAuctionetItem).not.toHaveBeenCalled();
+  expect(putCatalogObject).not.toHaveBeenCalled();
+});
+
+it("resumes from the bucket after a failed Qdrant write", async () => {
+  const seed = vi
+    .spyOn(upsert, "upsertArtifact")
+    .mockRejectedValueOnce(new Error("Qdrant unavailable"));
+  await expect(
+    indexCategory(category, options(), { remaining: 1 }),
+  ).rejects.toThrow("Qdrant unavailable");
+  expect(objects.has(vectorKey)).toBe(true);
+  expect(objects.has(failureKey)).toBe(false);
+  seed.mockRestore();
+  expect(
+    await indexCategory(category, options(), { remaining: 1 }),
+  ).toMatchObject({ reused: 1, indexed: 1, embedded: 0 });
+  expect(embedding.embedAuctionetItem).toHaveBeenCalledTimes(1);
+});
+
+it("stops on an upload failure before upsert or any further embeddings", async () => {
+  objects.set("scrape/28-paintings/100/10002.json", {
+    ...item,
+    auctionet_id: 10002,
   });
-  expect(catalogObjectExists).not.toHaveBeenCalled();
-  expect(downloadCatalogObject).not.toHaveBeenCalled();
-  expect(qdrantClient.retrieve).not.toHaveBeenCalled();
-});
-
-it("stops on a failed artifact download instead of proceeding to paid embedding", async () => {
-  vi.mocked(downloadCatalogObject).mockRejectedValue(
+  vi.mocked(putCatalogObject).mockRejectedValue(
     new Error("Bucket unavailable"),
   );
-  await expect(prepareVectors(category, false)).rejects.toThrow(
+  const budget = { remaining: 2 };
+  await expect(indexCategory(category, options(), budget)).rejects.toThrow(
     "Bucket unavailable",
+  );
+  expect(qdrantClient.upsert).not.toHaveBeenCalled();
+  expect(embedding.embedAuctionetItem).toHaveBeenCalledTimes(1);
+  expect(budget.remaining).toBe(1);
+});
+
+it("does not treat a bucket check failure as a missing artifact", async () => {
+  vi.mocked(catalogObjectExists).mockRejectedValue(new Error("Access denied"));
+  await expect(
+    indexCategory(category, options(), { remaining: 1 }),
+  ).rejects.toThrow("Access denied");
+  expect(embedding.embedAuctionetItem).not.toHaveBeenCalled();
+});
+
+it("records a failed embedding in the bucket and counts it against the budget", async () => {
+  vi.mocked(embedding.embedAuctionetItem).mockRejectedValueOnce(
+    new Error("Embedding failed"),
+  );
+  const budget = { remaining: 1 };
+  await expect(indexCategory(category, options(), budget)).rejects.toThrow(
+    "Embedding failed",
+  );
+  expect(budget.remaining).toBe(0);
+  expect(objects.has(vectorKey)).toBe(false);
+  expect(objects.get(failureKey)).toEqual({
+    item_key: itemKey,
+    failed_at: expect.any(String),
+    error: "Embedding failed",
+  });
+  expect(putCatalogObject).toHaveBeenCalledWith(
+    failureKey,
+    expect.any(String),
+    { skipExisting: false },
+  );
+  expect(qdrantClient.upsert).not.toHaveBeenCalled();
+});
+
+it("shares the embedding budget across categories, excluding reused and unsold items", async () => {
+  objects.set(vectorKey, artifact());
+  objects.set("scrape/28-paintings/100/10002.json", {
+    ...item,
+    auctionet_id: 10002,
+    status: "unsold",
+  });
+  objects.set("scrape/28-paintings/100/10003.json", {
+    ...item,
+    auctionet_id: 10003,
+  });
+  objects.set("scrape/28-paintings/100/10004.json", {
+    ...item,
+    auctionet_id: 10004,
+  });
+  objects.set("scrape/6-glass/100/10005.json", {
+    ...item,
+    auctionet_id: 10005,
+  });
+  objects.set("scrape/6-glass/100/10006.json", {
+    ...item,
+    auctionet_id: 10006,
+  });
+  const budget = { remaining: 3 };
+  expect(await indexCategory(category, options(), budget)).toMatchObject({
+    embedded: 2,
+    reused: 1,
+    unsold: 1,
+  });
+  expect(budget.remaining).toBe(1);
+  expect(
+    await indexCategory({ ...category, segment: "6-glass" }, options(), budget),
+  ).toMatchObject({ checked: 1, embedded: 1 });
+  expect(budget.remaining).toBe(0);
+  expect(readCatalogJson).not.toHaveBeenCalledWith(
+    "scrape/6-glass/100/10006.json",
+  );
+});
+
+it("does not request the next listing page after reaching the embedding budget", async () => {
+  const nextPage = vi.fn();
+  vi.mocked(listCatalogKeyPages).mockImplementation(async function* (prefix) {
+    if (prefix.endsWith("/failures")) return;
+    yield [itemKey, vectorKey, "scrape/28-paintings/runs/123.json"];
+    nextPage();
+    yield [];
+  });
+  await indexCategory(category, options(), { remaining: 1 });
+  expect(nextPage).not.toHaveBeenCalled();
+});
+
+it("supports independent category workers with separate collections and budgets", async () => {
+  objects.set("scrape/6-glass/100/10001.json", item);
+  const paintingBudget = { remaining: 1 };
+  const glassBudget = { remaining: 1 };
+  await Promise.all([
+    indexCategory(category, options(), paintingBudget),
+    indexCategory({ ...category, segment: "6-glass" }, options(), glassBudget),
+  ]);
+  expect(objects.has(vectorKey)).toBe(true);
+  expect(objects.has("scrape/6-glass/vectors/100/10001.json")).toBe(true);
+  expect(qdrantClient.upsert).toHaveBeenCalledWith(
+    "references-6-glass",
+    expect.anything(),
+  );
+  expect(paintingBudget.remaining).toBe(0);
+  expect(glassBudget.remaining).toBe(0);
+});
+
+it("dry-run reads bucket and Qdrant, but never embeds, writes, or upserts", async () => {
+  objects.set("scrape/28-paintings/100/10002.json", {
+    ...item,
+    auctionet_id: 10002,
+  });
+  objects.set(vectorKey, artifact());
+  expect(
+    await indexCategory(
+      category,
+      { ...options(), dryRun: true },
+      { remaining: 1 },
+    ),
+  ).toMatchObject({ reused: 1, embedded: 1 });
+  expect(qdrantClient.retrieve).toHaveBeenCalled();
+  expect(embedding.embedAuctionetItem).not.toHaveBeenCalled();
+  expect(putCatalogObject).not.toHaveBeenCalled();
+  expect(qdrantClient.upsert).not.toHaveBeenCalled();
+});
+
+it("dry-run handles a missing collection without creating it or retrieving missing points", async () => {
+  vi.mocked(qdrantClient.collectionExists).mockResolvedValue({ exists: false });
+  await indexCategory(
+    category,
+    { ...options(), dryRun: true },
+    { remaining: 1 },
+  );
+  expect(qdrantClient.retrieve).not.toHaveBeenCalled();
+  expect(qdrantClient.upsert).not.toHaveBeenCalled();
+});
+
+it("embed/store runs require no Qdrant access and immediately save vectors", async () => {
+  const stages = new Set<"embed" | "store" | "upsert">(["embed", "store"]);
+  await indexCategory(category, { ...options(), stages }, { remaining: 1 });
+  expect(putCatalogObject).toHaveBeenCalled();
+  expect(qdrantClient.retrieve).not.toHaveBeenCalled();
+  expect(qdrantClient.upsert).not.toHaveBeenCalled();
+});
+
+it("upsert-only reads bucket artifacts and preserves force and max-items", async () => {
+  objects.set(vectorKey, artifact());
+  objects.set("scrape/28-paintings/100/10002.json", {
+    ...item,
+    auctionet_id: 10002,
+  });
+  objects.set("scrape/28-paintings/vectors/100/10002.json", artifact(10002));
+  vi.mocked(qdrantClient.retrieve).mockResolvedValue([
+    { id: 1000100 },
+    { id: 1000101 },
+  ]);
+  const stages = new Set<"embed" | "store" | "upsert">(["upsert"]);
+  expect(
+    await indexCategory(
+      category,
+      { ...options(), stages, force: true, maxItems: 1 },
+      { remaining: null },
+    ),
+  ).toMatchObject({ checked: 1, indexed: 1, embedded: 0 });
+  expect(qdrantClient.upsert).toHaveBeenCalledTimes(1);
+  expect(embedding.embedAuctionetItem).not.toHaveBeenCalled();
+});
+
+it("rejects mismatched bucket artifacts instead of paying to replace them", async () => {
+  objects.set(vectorKey, artifact(999));
+  await expect(
+    indexCategory(category, options(), { remaining: 1 }),
+  ).rejects.toThrow("auctionet_id mismatch");
+  expect(embedding.embedAuctionetItem).not.toHaveBeenCalled();
+  expect(qdrantClient.upsert).not.toHaveBeenCalled();
+});
+
+it("rejects cron embedding without a durable store stage", () => {
+  expect(() => parseArgs(["--stages", "embed,upsert"])).toThrow(
+    "requires --stages embed,store",
+  );
+  expect(
+    parseArgs(["--stages", "embed,store", "--category", "6-glass"])
+      .categoryArgs,
+  ).toEqual(["6-glass"]);
+});
+
+it("retries only bucket failures and deletes the record after saving vectors", async () => {
+  objects.set("scrape/28-paintings/100/10002.json", {
+    ...item,
+    auctionet_id: 10002,
+  });
+  vi.mocked(embedding.embedAuctionetItem).mockRejectedValueOnce(
+    new Error("Bad image"),
+  );
+  await expect(
+    indexCategory(category, options(), { remaining: 1 }),
+  ).rejects.toThrow("Bad image");
+  expect(objects.has(failureKey)).toBe(true);
+  expect(
+    await indexCategory(
+      category,
+      { ...options(), retryFailed: true },
+      { remaining: 2 },
+    ),
+  ).toMatchObject({ checked: 1, embedded: 1, failed: 0 });
+  expect(objects.has(failureKey)).toBe(false);
+  expect(readCatalogJson).not.toHaveBeenCalledWith(
+    "scrape/28-paintings/100/10002.json",
+  );
+  expect(deleteCatalogObject).toHaveBeenCalledWith(failureKey);
+  const vectorWrite = vi.mocked(putCatalogObject).mock.invocationCallOrder[1];
+  expect(vectorWrite).toBeLessThan(
+    vi.mocked(deleteCatalogObject).mock.invocationCallOrder[0],
+  );
+  expect(
+    await indexCategory(
+      category,
+      { ...options(), retryFailed: true },
+      { remaining: 1 },
+    ),
+  ).toMatchObject({ checked: 0 });
+});
+
+it("keeps a failure on another failed retry and updates its error", async () => {
+  objects.set(failureKey, { error: "Old error" });
+  vi.mocked(embedding.embedAuctionetItem).mockRejectedValueOnce(
+    new Error("Still failing"),
+  );
+  await expect(
+    indexCategory(
+      category,
+      { ...options(), retryFailed: true },
+      { remaining: 1 },
+    ),
+  ).rejects.toThrow("Still failing");
+  expect(objects.get(failureKey)).toMatchObject({ error: "Still failing" });
+  expect(deleteCatalogObject).not.toHaveBeenCalled();
+});
+
+it.each(["saved", "indexed"])(
+  "clears %s embedding failures without paying to embed again",
+  async (state) => {
+    objects.set(failureKey, { error: "Old error" });
+    if (state === "saved") objects.set(vectorKey, artifact());
+    else
+      vi.mocked(qdrantClient.retrieve).mockResolvedValue([
+        { id: 1000100 },
+        { id: 1000101 },
+      ]);
+    await indexCategory(
+      category,
+      { ...options(), retryFailed: true },
+      { remaining: 1 },
+    );
+    expect(objects.has(failureKey)).toBe(false);
+    expect(embedding.embedAuctionetItem).not.toHaveBeenCalled();
+  },
+);
+
+it("a successful embedding clears the failure even if the following Qdrant write fails", async () => {
+  objects.set(failureKey, { error: "Old error" });
+  vi.spyOn(upsert, "upsertArtifact").mockRejectedValueOnce(
+    new Error("Qdrant unavailable"),
+  );
+  await expect(
+    indexCategory(
+      category,
+      { ...options(), retryFailed: true },
+      { remaining: 1 },
+    ),
+  ).rejects.toThrow("Qdrant unavailable");
+  expect(objects.has(vectorKey)).toBe(true);
+  expect(objects.has(failureKey)).toBe(false);
+});
+
+it("dry-run retries leave failure records untouched on both successful plans and errors", async () => {
+  objects.set(failureKey, { error: "Old error" });
+  const retryOptions = { ...options(), retryFailed: true, dryRun: true };
+  await indexCategory(category, retryOptions, { remaining: 1 });
+  objects.set(itemKey, {});
+  await expect(
+    indexCategory(category, retryOptions, { remaining: 1 }),
+  ).rejects.toThrow("auctionet_id");
+  expect(objects.get(failureKey)).toEqual({ error: "Old error" });
+  expect(putCatalogObject).not.toHaveBeenCalled();
+  expect(deleteCatalogObject).not.toHaveBeenCalled();
+});
+
+it("preserves the failure and saved vectors if clearing the bucket record fails", async () => {
+  objects.set(failureKey, { error: "Old error" });
+  vi.mocked(deleteCatalogObject).mockRejectedValueOnce(
+    new Error("Delete denied"),
+  );
+  await expect(
+    indexCategory(
+      category,
+      { ...options(), retryFailed: true },
+      { remaining: 1 },
+    ),
+  ).rejects.toThrow("Delete denied");
+  expect(objects.has(vectorKey)).toBe(true);
+  expect(objects.has(failureKey)).toBe(true);
+  expect(qdrantClient.upsert).not.toHaveBeenCalled();
+});
+
+it("retry CLI defaults to embed/store/upsert and rejects scrape or missing embed", () => {
+  expect(parseArgs(["--retry-failed"])).toMatchObject({
+    retryFailed: true,
+    stages: new Set(["embed", "store", "upsert"]),
+  });
+  expect(() =>
+    parseArgs(["--retry-failed", "--stages", "scrape,embed,store"]),
+  ).toThrow("cannot include scrape");
+  expect(() => parseArgs(["--retry-failed", "--stages", "upsert"])).toThrow(
+    "requires the embed stage",
   );
 });

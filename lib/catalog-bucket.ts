@@ -1,4 +1,5 @@
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
@@ -74,13 +75,19 @@ export async function catalogObjectExists(key: string) {
   }
 }
 
-export async function listCatalogKeys(prefix: string) {
+export async function* listCatalogKeyPages(
+  prefix: string,
+  onProgress?: (message: string) => void,
+) {
   const s3Client = await getS3Client();
   const bucket = requireBucketName();
-  const keys: string[] = [];
   let continuationToken: string | undefined;
+  let page = 0;
+  let listed = 0;
 
   do {
+    page += 1;
+    onProgress?.(`Listing bucket page ${page}: ${prefix}`);
     const response = await s3Client.send(
       new ListObjectsV2Command({
         Bucket: bucket,
@@ -89,6 +96,7 @@ export async function listCatalogKeys(prefix: string) {
       }),
     );
 
+    const keys: string[] = [];
     for (const object of response.Contents ?? []) {
       if (object.Key && !object.Key.endsWith("/")) {
         keys.push(object.Key);
@@ -98,12 +106,26 @@ export async function listCatalogKeys(prefix: string) {
     continuationToken = response.IsTruncated
       ? response.NextContinuationToken
       : undefined;
+    listed += keys.length;
+    onProgress?.(
+      `Listed page ${page}: ${keys.length} objects (${listed} listed so far)`,
+    );
+    yield keys.sort();
   } while (continuationToken);
+}
 
+export async function listCatalogKeys(
+  prefix: string,
+  onProgress?: (message: string) => void,
+) {
+  const keys: string[] = [];
+  for await (const page of listCatalogKeyPages(prefix, onProgress)) {
+    keys.push(...page);
+  }
   return keys.sort();
 }
 
-export async function downloadCatalogObject(key: string, localPath: string) {
+async function readCatalogObject(key: string) {
   const s3Client = await getS3Client();
   const response = await s3Client.send(
     new GetObjectCommand({
@@ -117,7 +139,15 @@ export async function downloadCatalogObject(key: string, localPath: string) {
     throw new Error(`Empty body for s3://${requireBucketName()}/${key}`);
   }
 
-  const bytes = Buffer.from(await body.transformToByteArray());
+  return Buffer.from(await body.transformToByteArray());
+}
+
+export async function readCatalogJson(key: string): Promise<unknown> {
+  return JSON.parse((await readCatalogObject(key)).toString("utf8"));
+}
+
+export async function downloadCatalogObject(key: string, localPath: string) {
+  const bytes = await readCatalogObject(key);
   await mkdir(path.dirname(localPath), { recursive: true });
   await writeFile(localPath, bytes);
 }
@@ -142,6 +172,13 @@ export async function putCatalogObject(
   );
 
   return { uploaded: true, skipped: false };
+}
+
+export async function deleteCatalogObject(key: string) {
+  const s3Client = await getS3Client();
+  await s3Client.send(
+    new DeleteObjectCommand({ Bucket: requireBucketName(), Key: key }),
+  );
 }
 
 export async function uploadCatalogObject(
@@ -185,26 +222,40 @@ export async function syncCatalogPrefixDown(options: {
   prefix: string;
   localRoot?: string;
   skipExistingLocal?: boolean;
+  onProgress?: (message: string) => void;
 }) {
   const localRoot = options.localRoot ?? "data/auctionet/items";
-  const keys = await listCatalogKeys(options.prefix);
+  const startedAt = Date.now();
+  const keys = await listCatalogKeys(options.prefix, options.onProgress);
+  const itemKeys = keys.filter(
+    (key) => !key.includes("/vectors/") || options.prefix.includes("/vectors"),
+  );
+  options.onProgress?.(
+    `Listing complete: ${itemKeys.length} files to check (${keys.length - itemKeys.length} vector objects excluded)`,
+  );
   let downloaded = 0;
   let skipped = 0;
 
-  for (const key of keys) {
-    if (key.includes("/vectors/") && !options.prefix.includes("/vectors")) {
-      continue;
-    }
-
+  for (const key of itemKeys) {
     const localPath = bucketKeyToLocalPath(key, localRoot);
 
     if (options.skipExistingLocal !== false && (await fileExists(localPath))) {
       skipped += 1;
-      continue;
+    } else {
+      options.onProgress?.(
+        `Downloading ${downloaded + skipped + 1}/${itemKeys.length}: ${key}`,
+      );
+      await downloadCatalogObject(key, localPath);
+      downloaded += 1;
+      options.onProgress?.(`Saved: ${localPath}`);
     }
 
-    await downloadCatalogObject(key, localPath);
-    downloaded += 1;
+    const done = downloaded + skipped;
+    if (done === 1 || done % 100 === 0 || done === itemKeys.length) {
+      options.onProgress?.(
+        `Sync progress: ${done}/${itemKeys.length} (${Math.round((done / itemKeys.length) * 100)}%) — ${downloaded} downloaded, ${skipped} already local, ${Math.round((Date.now() - startedAt) / 1000)}s elapsed`,
+      );
+    }
   }
 
   return { downloaded, skipped, total: keys.length };
