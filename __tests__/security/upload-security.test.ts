@@ -10,9 +10,7 @@ const UUID_PATTERN =
 
 const mockS3Send = vi.hoisted(() => vi.fn().mockResolvedValue({}));
 const mockInsertReturning = vi.hoisted(() =>
-  vi
-    .fn()
-    .mockResolvedValue([{ id: "550e8400-e29b-41d4-a716-446655440000" }]),
+  vi.fn().mockResolvedValue([{ id: "550e8400-e29b-41d4-a716-446655440000" }]),
 );
 const mockInsertValues = vi.hoisted(() =>
   vi.fn((values: unknown) => {
@@ -71,6 +69,7 @@ function makeRequest(options: {
   contentLength?: string | null;
   cookie?: string;
   extraFields?: Record<string, string>;
+  headers?: Record<string, string>;
 }) {
   const {
     file = null,
@@ -78,6 +77,7 @@ function makeRequest(options: {
     contentLength,
     cookie,
     extraFields = {},
+    headers: extraHeaders = {},
   } = options;
   const headers = new Headers();
   if (contentLength !== null) {
@@ -88,6 +88,9 @@ function makeRequest(options: {
   }
   if (cookie) {
     headers.set("cookie", cookie);
+  }
+  for (const [name, value] of Object.entries(extraHeaders)) {
+    headers.set(name, value);
   }
 
   const formData = vi.fn(async () => {
@@ -109,6 +112,8 @@ function makeRequest(options: {
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   mockEnforceRateLimit.mockResolvedValue(null);
   mockSharpToBuffer.mockResolvedValue(Buffer.from("processed-jpeg"));
   mockInsertReturning.mockResolvedValue([{ id: QUERY_ID }]);
@@ -168,7 +173,7 @@ describe("upload: malicious file content", () => {
 
   it("rejects an HTML polyglot served with an image MIME type", async () => {
     const file = new File(
-      ['<html><script>alert(document.cookie)</script></html>'],
+      ["<html><script>alert(document.cookie)</script></html>"],
       "polyglot.png",
       { type: "image/png" },
     );
@@ -184,7 +189,9 @@ describe("upload: malicious file content", () => {
 
   it("rejects SVG uploads (scriptable markup is not in the allowlist)", async () => {
     const file = new File(
-      ['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'],
+      [
+        '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+      ],
       "vector.svg",
       { type: "image/svg+xml" },
     );
@@ -367,6 +374,49 @@ describe("upload: failure handling", () => {
     expect(cleanup).toBeInstanceOf(DeleteObjectCommand);
     const putCommand = mockS3Send.mock.calls[0][0] as PutObjectCommand;
     expect(cleanup.input.Key).toBe(putCommand.input.Key);
+  });
+
+  it("rejects a missing turnstile token before reading the image", async () => {
+    vi.stubEnv("TURNSTILE_SECRET_KEY", "test-secret");
+    const request = makeRequest({
+      file: new File([pngBytes()], "photo.png", { type: "image/png" }),
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "Couldn't verify this upload. Try again.",
+    });
+    expect(request.formData).not.toHaveBeenCalled();
+    expect(mockS3Send).not.toHaveBeenCalled();
+  });
+
+  it("uploads when siteverify accepts the token", async () => {
+    vi.stubEnv("TURNSTILE_SECRET_KEY", "test-secret");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const request = makeRequest({
+      file: new File([pngBytes()], "photo.png", { type: "image/png" }),
+      headers: { "cf-turnstile-response": "token-ok" },
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0]?.[1] as { body: string }).body,
+    ) as { secret: string; response: string };
+    expect(body.secret).toBe("test-secret");
+    expect(body.response).toBe("token-ok");
+    expect(mockS3Send).toHaveBeenCalled();
   });
 
   it("fails closed on rate limiting before any request processing", async () => {
