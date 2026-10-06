@@ -79,7 +79,9 @@ it("recovers rejected URLs using full-resolution PNGs and keeps reference URLs a
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (urls.includes(url)) return new Response(new Uint8Array(image));
     requests++;
-    const inputs = JSON.parse(init!.body as string).input;
+    const body = JSON.parse(init!.body as string);
+    expect(body.model).toBe("google/gemini-embedding-2:batch");
+    const inputs = body.input;
     if (requests === 1) {
       expect(
         inputs.map(
@@ -104,6 +106,7 @@ it("recovers rejected URLs using full-resolution PNGs and keeps reference URLs a
   });
   vi.stubGlobal("fetch", fetchMock);
   const artifact = await embedAuctionetItem(item, options);
+  expect(artifact.model).toBe("google/gemini-embedding-2:batch");
   expect(requests).toBe(2);
   expect(
     artifact.references.map(({ image_index, image_url, embedding }) => ({

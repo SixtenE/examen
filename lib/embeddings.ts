@@ -1,4 +1,4 @@
-const EMBEDDING_MODEL = "google/gemini-embedding-2";
+export const EMBEDDING_MODEL = "google/gemini-embedding-2:batch";
 export const EMBEDDING_DIMENSIONS = 3072;
 
 export async function embedImageUrl(

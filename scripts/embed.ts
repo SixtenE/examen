@@ -21,10 +21,11 @@ import {
   listFailedCatalogItems,
   recordCatalogFailure,
 } from "../lib/catalog-failures";
+import { CatalogItemError } from "../lib/catalog-item-error";
+import { EMBEDDING_MODEL } from "../lib/embeddings";
 import { formatDuration } from "../lib/format-duration";
 import { setTimeout as sleep } from "node:timers/promises";
 import sharp from "sharp";
-import { CatalogItemError } from "../lib/catalog-item-error";
 
 type CliOptions = {
   itemsDir: string;
@@ -77,7 +78,6 @@ const CATEGORY_SEGMENT_PATTERN = /^\d+-[a-z0-9-]+$/;
 const DEFAULT_BATCH_SIZE = 5;
 const DEFAULT_DELAY_MS = 1000;
 const DEFAULT_MAX_RETRIES = 5;
-const EMBEDDING_MODEL = "google/gemini-embedding-2";
 const EMBEDDING_DIMENSIONS = 3072;
 const OPENROUTER_EMBEDDINGS_URL = "https://openrouter.ai/api/v1/embeddings";
 const MAX_EMBEDDING_REQUEST_BYTES = 50 * 1024 * 1024;
