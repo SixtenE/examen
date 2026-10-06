@@ -24,7 +24,7 @@ type TurnstileRenderOptions = {
 
 type TurnstileApi = {
   ready: (callback: () => void) => void;
-  render: (container: HTMLElement, options: TurnstileRenderOptions) => string;
+  render?: (container: HTMLElement, options: TurnstileRenderOptions) => string;
   execute: (widgetId: string) => void;
   reset: (widgetId: string) => void;
   remove: (widgetId: string) => void;
@@ -146,26 +146,37 @@ function waitForToken() {
   });
 }
 
+function renderWidget(container: HTMLElement, api: TurnstileApi, key: string) {
+  if (!api.render) return;
+  widgetId = api.render(container, {
+    sitekey: key,
+    action: "upload",
+    theme: "auto",
+    appearance: "interaction-only",
+    execution: "execute",
+    callback: settle,
+    "error-callback": () => fail(new Error(FAILED)),
+    "expired-callback": onExpired,
+    "timeout-callback": () => fail(new Error(FAILED)),
+  });
+  markReady?.();
+  startChallenge();
+}
+
 export function bindTurnstile(container: HTMLElement) {
   const key = siteKey();
   const api = window.turnstile;
   if (!key || !api || widgetId) return;
+  // ready() warns and drops the callback once api.js has already loaded.
+  if (typeof api.render === "function") {
+    renderWidget(container, api, key);
+    return;
+  }
   const gen = generation;
   api.ready(() => {
-    if (gen !== generation || !window.turnstile || widgetId) return;
-    widgetId = window.turnstile.render(container, {
-      sitekey: key,
-      action: "upload",
-      theme: "auto",
-      appearance: "interaction-only",
-      execution: "execute",
-      callback: settle,
-      "error-callback": () => fail(new Error(FAILED)),
-      "expired-callback": onExpired,
-      "timeout-callback": () => fail(new Error(FAILED)),
-    });
-    markReady?.();
-    startChallenge();
+    const loaded = window.turnstile;
+    if (gen !== generation || !loaded || widgetId) return;
+    renderWidget(container, loaded, key);
   });
 }
 
@@ -218,6 +229,7 @@ export function TurnstileWidget() {
   const key = siteKey();
 
   useEffect(() => {
+    if (ref.current) bindTurnstile(ref.current);
     return () => unbindTurnstile();
   }, []);
 
