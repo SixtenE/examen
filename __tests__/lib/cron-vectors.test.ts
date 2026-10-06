@@ -52,7 +52,7 @@ function artifact(id = item.auctionet_id) {
     source_url: null,
     title: "Painting",
     embedded_at: "2026-10-03T00:00:00Z",
-    model: "google/gemini-embedding-2",
+    model: "google/gemini-embedding-2:batch",
     dimensions: 3072,
     references: item.image_urls.map((url, index) => ({
       image_index: index,
@@ -164,6 +164,18 @@ it("reuses saved vectors to repair partial Qdrant points without embedding", asy
   ).toMatchObject({ reused: 1, indexed: 1, embedded: 0 });
   expect(embedding.embedAuctionetItem).not.toHaveBeenCalled();
   expect(putCatalogObject).not.toHaveBeenCalled();
+});
+
+it("reuses vectors saved under the sync Gemini slug without embedding again", async () => {
+  objects.set(vectorKey, {
+    ...artifact(),
+    model: "google/gemini-embedding-2",
+  });
+  vi.mocked(qdrantClient.retrieve).mockResolvedValue([{ id: 1000100 }]);
+  expect(
+    await indexCategory(category, options(), { remaining: 1 }),
+  ).toMatchObject({ reused: 1, indexed: 1, embedded: 0 });
+  expect(embedding.embedAuctionetItem).not.toHaveBeenCalled();
 });
 
 it("resumes from the bucket after a failed Qdrant write", async () => {

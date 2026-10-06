@@ -5,7 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { CatalogItemError } from "../lib/catalog-item-error";
 import { referenceCollection } from "../lib/catalog-paths";
-import { EMBEDDING_DIMENSIONS } from "../lib/embeddings";
+import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "../lib/embeddings";
 
 type QdrantClient = typeof import("../lib/qdrant").qdrantClient;
 
@@ -73,8 +73,12 @@ type Summary = {
 };
 
 const DEFAULT_BATCH_SIZE = 100;
-const EMBEDDING_MODEL = "google/gemini-embedding-2";
 const MAX_REFERENCES_PER_ITEM = 100;
+// Same Gemini Embedding 2 space as the batch slug. Drop once those artifacts are gone.
+const ACCEPTED_EMBEDDING_MODELS = new Set([
+  EMBEDDING_MODEL,
+  "google/gemini-embedding-2",
+]);
 
 function usage() {
   return [
@@ -297,9 +301,12 @@ export function validateVectorArtifact(
     throw new CatalogItemError(`${filePath} is missing numeric auctionet_id`);
   }
 
-  if (value.model !== EMBEDDING_MODEL) {
+  if (
+    typeof value.model !== "string" ||
+    !ACCEPTED_EMBEDDING_MODELS.has(value.model)
+  ) {
     throw new CatalogItemError(
-      `${filePath} model is ${String(value.model)}, expected ${EMBEDDING_MODEL}`,
+      `${filePath} model is ${String(value.model)}, expected ${[...ACCEPTED_EMBEDDING_MODELS].join(" or ")}`,
     );
   }
 
