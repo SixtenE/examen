@@ -10,6 +10,7 @@ import * as z from "zod";
 import { createContext, useContext, type ReactNode } from "react";
 import { toast } from "sonner";
 
+import { getUploadToken, TurnstileWidget } from "@/components/turnstile";
 import { Button } from "@/components/ui/button";
 import { queryClient } from "@/components/providers";
 import { getApiErrorMessage, throwApiError } from "@/lib/api-errors";
@@ -31,6 +32,7 @@ type UploadVariables = {
 };
 
 async function uploadImage(file: File, source: UploadVariables["source"]) {
+  const token = await getUploadToken();
   const formData = new FormData();
   formData.append("file", file);
 
@@ -39,6 +41,7 @@ async function uploadImage(file: File, source: UploadVariables["source"]) {
     body: formData,
     headers: {
       "X-Upload-Source": source,
+      ...(token ? { "cf-turnstile-response": token } : {}),
     },
   });
 
@@ -154,6 +157,7 @@ function UploadFormRoot({ children }: { children: ReactNode }) {
         )}
 
         {children}
+        <TurnstileWidget />
       </div>
     </UploadContext.Provider>
   );

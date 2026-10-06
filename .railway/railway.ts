@@ -20,7 +20,7 @@ export default defineRailway(() => {
     replicas: { "europe-west4-drams3a": 1 },
     deploy: { sleepApplication: true },
     domains: ["examen.sixten.app"],
-    env: { AWS_ACCESS_KEY_ID: preserve(), AWS_BUCKET_NAME: preserve(), AWS_ENDPOINT_URL: preserve(), AWS_REGION: preserve(), AWS_SECRET_ACCESS_KEY: preserve(), DATABASE_URL: preserve(), OPENROUTER_API_KEY: preserve(), QDRANT_API_KEY: preserve(), QDRANT_URL: preserve(), REDIS_URL: preserve() },
+    env: { AWS_ACCESS_KEY_ID: preserve(), AWS_BUCKET_NAME: preserve(), AWS_ENDPOINT_URL: preserve(), AWS_REGION: preserve(), AWS_SECRET_ACCESS_KEY: preserve(), DATABASE_URL: preserve(), NEXT_PUBLIC_TURNSTILE_SITE_KEY: preserve(), OPENROUTER_API_KEY: preserve(), QDRANT_API_KEY: preserve(), QDRANT_URL: preserve(), REDIS_URL: preserve(), TURNSTILE_SECRET_KEY: preserve() },
   });
   const DrizzleGateway = service("Drizzle Gateway", {
     source: image("ghcr.io/drizzle-team/gateway:latest"),

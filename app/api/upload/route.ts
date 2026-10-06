@@ -7,6 +7,7 @@ import { queries } from "@/db/schema";
 import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { s3Client } from "@/lib/s3";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { enforceTurnstile } from "@/lib/turnstile";
 import { trackServerError, trackServerEvent, withSpan } from "@/lib/telemetry";
 import { SeverityNumber } from "@opentelemetry/api-logs";
 import { isQueryImageKey } from "@/lib/utils";
@@ -186,6 +187,11 @@ export async function POST(request: NextRequest) {
 
     if (requestBytes > MAX_REQUEST_BYTES) {
       return NextResponse.json({ error: "Request too large" }, { status: 413 });
+    }
+
+    const turnstileResponse = await enforceTurnstile(request);
+    if (turnstileResponse) {
+      return turnstileResponse;
     }
 
     let formData: FormData;

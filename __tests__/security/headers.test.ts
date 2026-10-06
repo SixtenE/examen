@@ -73,8 +73,20 @@ describe("HTTP security headers", () => {
     expect(directives["base-uri"]).toEqual(["'self'"]);
     expect(directives["form-action"]).toEqual(["'self'"]);
     expect(directives["frame-ancestors"]).toEqual(["'none'"]);
-    // No remote script origins: third-party JS is the classic XSS exfil path.
-    expect(directives["script-src"]).not.toContain("https:");
+    // Turnstile is the only remote script, frame, or connection origin.
+    expect(
+      (directives["script-src"] ?? []).filter((value) =>
+        value.startsWith("https:"),
+      ),
+    ).toEqual(["https://challenges.cloudflare.com"]);
+    expect(directives["frame-src"]).toEqual([
+      "https://challenges.cloudflare.com",
+    ]);
+    expect(
+      (directives["connect-src"] ?? []).filter((value) =>
+        value.startsWith("https:"),
+      ),
+    ).toEqual(["https://challenges.cloudflare.com"]);
     // Images may only load from the app, inline data, or the two CDNs.
     const imgSrc = directives["img-src"] ?? [];
     expect(imgSrc).toContain("'self'");

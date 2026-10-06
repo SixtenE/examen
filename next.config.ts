@@ -14,12 +14,13 @@ const uploadSourceMaps = Boolean(
 const isDev = process.env.NODE_ENV === "development";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+  `script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com${isDev ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
-  `connect-src 'self'${isDev ? " ws:" : ""}`,
+  `connect-src 'self' https://challenges.cloudflare.com${isDev ? " ws:" : ""}`,
   "img-src 'self' blob: data: https://compact-envelope-mcwhvmbc.t3.storageapi.dev https://images.auctionet.com",
   "font-src 'self'",
   "object-src 'none'",
+  "frame-src https://challenges.cloudflare.com",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
